@@ -1,0 +1,80 @@
+"cruise_id": "HB0901"
+"calibration_report_title": null
+"calibration_report_DOI": null
+"calibration_report": null
+"channels": [{"source_filenames": ["HB_018kHz_cal_02262009.cal"], "record_created": "2026-03-19T22:13:21.764248+00:00",
+    "record_author": null, "channel": "GPT  18 kHz 009072056b0e 1-1 ES18-11", "transceiver_id": "009072056b0e",
+    "transceiver_model": "GPT", "transceiver_ethernet_address": "009072056b0e", "transceiver_serial_number": null,
+    "transceiver_number": 1, "transceiver_port": 1, "channel_instance_number": 1,
+    "transducer_model": "ES18-11  Serial No.   18", "transducer_serial_number": null,
+    "pulse_form": "0", "frequency_start": 18000.0, "frequency_end": 18000.0, "nominal_transducer_frequency": 18000.0,
+    "transmit_power": 2000.0, "transmit_duration_nominal": 0.001024, "multiplexing_found": null,
+    "calibration_date": "2009-02-26", "calibration_comments": "    18 kHz calibration,\
+      \ HB BIGELOW, Narragansett Bay Anchorage, 26 Feb. 2009, 64-mm-Cu sphere", "calibration_version": null,
+    "absorption_indicative": 0.0023, "sound_speed_indicative": 1498.3, "temperature": null,
+    "salinity": null, "acidity": null, "pressure": null, "sample_interval": 0.000128,
+    "transmit_bandwidth": 1570.0, "beam_type": null, "calibration_acquisition_method": null,
+    "sphere_diameter": null, "sphere_material": null, "source_file_type": ".cal",
+    "source_file_location": null, "sonar_software_version": "2.2.0", "sonar_software_name": null,
+    "equivalent_beam_angle": -17.3, "gain_correction": [22.89], "sa_correction": [
+      -0.64], "frequency": [18000.0], "beamwidth_transmit_major": [10.92], "beamwidth_receive_major": [
+      10.92], "beamwidth_transmit_minor": [10.85], "beamwidth_receive_minor": [10.85],
+    "echoangle_major": [0.08], "echoangle_minor": [-0.07], "echoangle_major_sensitivity": [
+      13.9], "echoangle_minor_sensitivity": [13.9], "source_file_paths": null}, {
+    "source_filenames": ["HB_038kHz_cal_02262009.cal"], "record_created": "2026-03-19T22:13:21.764248+00:00",
+    "record_author": null, "channel": "GPT  38 kHz 0090720346bc 2-1 ES38B", "transceiver_id": "0090720346bc",
+    "transceiver_model": "GPT", "transceiver_ethernet_address": "0090720346bc", "transceiver_serial_number": null,
+    "transceiver_number": 2, "transceiver_port": 1, "channel_instance_number": 1,
+    "transducer_model": "ES38B  Serial No.   38", "transducer_serial_number": null,
+    "pulse_form": "0", "frequency_start": 38000.0, "frequency_end": 38000.0, "nominal_transducer_frequency": 38000.0,
+    "transmit_power": 1000.0, "transmit_duration_nominal": 0.001024, "multiplexing_found": null,
+    "calibration_date": "2009-02-26", "calibration_comments": "    38 kHz calibration\
+      \ on HB BIGELOW, 26 Feb. 2009, in Narragansett Bay Anchorage, 60-mm-Cu sphere",
+    "calibration_version": null, "absorption_indicative": 0.0086, "sound_speed_indicative": 1498.3,
+    "temperature": null, "salinity": null, "acidity": null, "pressure": null, "sample_interval": 0.000128,
+    "transmit_bandwidth": 2430.0, "beam_type": null, "calibration_acquisition_method": null,
+    "sphere_diameter": null, "sphere_material": null, "source_file_type": ".cal",
+    "source_file_location": null, "sonar_software_version": "2.2.0", "sonar_software_name": null,
+    "equivalent_beam_angle": -20.8, "gain_correction": [24.5], "sa_correction": [
+      -0.73], "frequency": [38000.0], "beamwidth_transmit_major": [7.04], "beamwidth_receive_major": [
+      7.04], "beamwidth_transmit_minor": [7.02], "beamwidth_receive_minor": [7.02],
+    "echoangle_major": [-0.02], "echoangle_minor": [0.08], "echoangle_major_sensitivity": [
+      21.9], "echoangle_minor_sensitivity": [21.9], "source_file_paths": null}, {
+    "source_filenames": ["HB_120kHz_cal_02262009.cal"], "record_created": "2026-03-19T22:13:21.764248+00:00",
+    "record_author": null, "channel": "GPT 120 kHz 0090720580f1 4-1 ES120", "transceiver_id": "0090720580f1",
+    "transceiver_model": "GPT", "transceiver_ethernet_address": "0090720580f1", "transceiver_serial_number": null,
+    "transceiver_number": 4, "transceiver_port": 1, "channel_instance_number": 1,
+    "transducer_model": "ES120  Serial No.   120", "transducer_serial_number": null,
+    "pulse_form": "0", "frequency_start": 120000.0, "frequency_end": 120000.0, "nominal_transducer_frequency": 120000.0,
+    "transmit_power": 500.0, "transmit_duration_nominal": 0.001024, "multiplexing_found": null,
+    "calibration_date": "2009-02-27", "calibration_comments": "    120 kHz calibration,\
+      \ HB BIGELOW, 26 Feb. 2009, Narragansett Bay Anchorage, 38.1-mm-WC sphere",
+    "calibration_version": null, "absorption_indicative": 0.0389, "sound_speed_indicative": 1498.3,
+    "temperature": null, "salinity": null, "acidity": null, "pressure": null, "sample_interval": 0.000128,
+    "transmit_bandwidth": 3030.0, "beam_type": null, "calibration_acquisition_method": null,
+    "sphere_diameter": null, "sphere_material": null, "source_file_type": ".cal",
+    "source_file_location": null, "sonar_software_version": "2.2.0", "sonar_software_name": null,
+    "equivalent_beam_angle": -20.9, "gain_correction": [26.87], "sa_correction": [
+      -0.37], "frequency": [120000.0], "beamwidth_transmit_major": [6.47], "beamwidth_receive_major": [
+      6.47], "beamwidth_transmit_minor": [6.6], "beamwidth_receive_minor": [6.6],
+    "echoangle_major": [0.1], "echoangle_minor": [-0.1], "echoangle_major_sensitivity": [
+      23.0], "echoangle_minor_sensitivity": [23.0], "source_file_paths": null}, {
+    "source_filenames": ["HB_200kHz_cal_02262009.cal"], "record_created": "2026-03-19T22:13:21.764248+00:00",
+    "record_author": null, "channel": "GPT 200 kHz 009072034261 3-1 ES200-7", "transceiver_id": "009072034261",
+    "transceiver_model": "GPT", "transceiver_ethernet_address": "009072034261", "transceiver_serial_number": null,
+    "transceiver_number": 3, "transceiver_port": 1, "channel_instance_number": 1,
+    "transducer_model": "ES200-7  Serial No.   200", "transducer_serial_number": null,
+    "pulse_form": "0", "frequency_start": 200000.0, "frequency_end": 200000.0, "nominal_transducer_frequency": 200000.0,
+    "transmit_power": 300.0, "transmit_duration_nominal": 0.001024, "multiplexing_found": null,
+    "calibration_date": "2009-02-27", "calibration_comments": "    200 kHz calibration,\
+      \ HB BIGELOW, Newport Anchorage, 26 Feb. 2009, 38.1-mm-WC sphere", "calibration_version": null,
+    "absorption_indicative": 0.0411, "sound_speed_indicative": 1498.3, "temperature": null,
+    "salinity": null, "acidity": null, "pressure": null, "sample_interval": 0.000125,
+    "transmit_bandwidth": 3090.0, "beam_type": null, "calibration_acquisition_method": null,
+    "sphere_diameter": null, "sphere_material": null, "source_file_type": ".cal",
+    "source_file_location": null, "sonar_software_version": "2.2.0", "sonar_software_name": null,
+    "equivalent_beam_angle": -20.8, "gain_correction": [21.19], "sa_correction": [
+      -1.01], "frequency": [200000.0], "beamwidth_transmit_major": [7.82], "beamwidth_receive_major": [
+      7.82], "beamwidth_transmit_minor": [6.48], "beamwidth_receive_minor": [6.48],
+    "echoangle_major": [0.38], "echoangle_minor": [0.05], "echoangle_major_sensitivity": [
+      23.0], "echoangle_minor_sensitivity": [23.0], "source_file_paths": null}]

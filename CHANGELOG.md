@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial release
-- Basic package structure with src layout
+- NEFSC Use Case 1 pipeline notebook
+- Poetry-based dependency management with AA-SI package dependencies
 - Development tooling (pytest, black, pylint, pre-commit)
 
 <!--

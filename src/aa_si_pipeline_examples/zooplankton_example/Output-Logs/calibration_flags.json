@@ -1,0 +1,175 @@
+{
+  "moderate_impacts": [
+    {
+      "parameter_name": "Sa Correction",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 0.96
+    },
+    {
+      "parameter_name": "Sa Correction",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 0.96
+    },
+    {
+      "parameter_name": "Sa Correction",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 0.96
+    }
+  ],
+  "large_impacts": [
+    {
+      "parameter_name": "Absorption",
+      "frequency": 120000,
+      "metric": "median",
+      "sv_change": 1.929
+    },
+    {
+      "parameter_name": "Absorption",
+      "frequency": 120000,
+      "metric": "max_abs",
+      "sv_change": 3.976
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 120000,
+      "metric": "median",
+      "sv_change": 1.998
+    },
+    {
+      "parameter_name": "Absorption",
+      "frequency": 120000,
+      "metric": "median",
+      "sv_change": 1.929
+    },
+    {
+      "parameter_name": "Absorption",
+      "frequency": 120000,
+      "metric": "max_abs",
+      "sv_change": 3.976
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 120000,
+      "metric": "median",
+      "sv_change": 1.998
+    },
+    {
+      "parameter_name": "Absorption",
+      "frequency": 120000,
+      "metric": "median",
+      "sv_change": 1.929
+    },
+    {
+      "parameter_name": "Absorption",
+      "frequency": 120000,
+      "metric": "max_abs",
+      "sv_change": 3.976
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 120000,
+      "metric": "median",
+      "sv_change": 1.998
+    }
+  ],
+  "critical_impacts": [
+    {
+      "parameter_name": "Gain Correction",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 10.26
+    },
+    {
+      "parameter_name": "Gain Correction",
+      "frequency": 200000,
+      "metric": "max_abs",
+      "sv_change": 10.26
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 120000,
+      "metric": "max_abs",
+      "sv_change": 4.219
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 11.197
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 200000,
+      "metric": "max_abs",
+      "sv_change": 11.273
+    },
+    {
+      "parameter_name": "Gain Correction",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 10.26
+    },
+    {
+      "parameter_name": "Gain Correction",
+      "frequency": 200000,
+      "metric": "max_abs",
+      "sv_change": 10.26
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 120000,
+      "metric": "max_abs",
+      "sv_change": 4.219
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 11.197
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 200000,
+      "metric": "max_abs",
+      "sv_change": 11.273
+    },
+    {
+      "parameter_name": "Gain Correction",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 10.26
+    },
+    {
+      "parameter_name": "Gain Correction",
+      "frequency": 200000,
+      "metric": "max_abs",
+      "sv_change": 10.26
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 120000,
+      "metric": "max_abs",
+      "sv_change": 4.219
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 200000,
+      "metric": "median",
+      "sv_change": 11.197
+    },
+    {
+      "parameter_name": "Combined Results",
+      "frequency": 200000,
+      "metric": "max_abs",
+      "sv_change": 11.273
+    }
+  ],
+  "data_irregularities": {
+    "across_frequencies": [],
+    "across_pings": []
+  },
+  "missing_parameters": []
+}

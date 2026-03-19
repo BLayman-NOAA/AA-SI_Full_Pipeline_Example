@@ -1,25 +1,22 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
 
-[project]
-name = "mypackagename"
+[tool.poetry]
+name = "aa-si-pipeline-examples"
 version = "0.1.0"
-description = "A template Python package for NOAA Fisheries AA-SI projects."
+description = "Example pipeline notebooks demonstrating end-to-end active acoustics data processing for NOAA Fisheries AA-SI."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
-authors = [
-    { name = "Your Name", email = "your.name@noaa.gov" },
-]
-maintainers = [
-    { name = "Your Name", email = "your.name@noaa.gov" },
-]
+authors = ["NOAA Fisheries AA-SI"]
 keywords = [
     "noaa",
     "fisheries",
     "acoustics",
-    # TODO: Add your package-specific keywords
+    "pipeline",
+    "sonar",
+    "echopype",
+    "echosounder",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -33,45 +30,46 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
 ]
-dependencies = [
-    # Add your package dependencies here, e.g.:
-    # "numpy>=1.21.0",
-    # "pandas>=1.3.0",
-]
+packages = [{include = "aa_si_pipeline_examples", from = "src"}]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "black>=24.0.0",
-    "pylint>=3.0.0",
-    "pre-commit>=3.0.0",
-]
-docs = [
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.0.0",
-    "mkdocstrings[python]>=0.24.0",
-]
+[tool.poetry.urls]
+Homepage = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example"
+Repository = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example.git"
+Issues = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example/issues"
+Changelog = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example/blob/main/CHANGELOG.md"
 
-[project.urls]
-Homepage = "https://github.com/nmfs-ost/mypackagename"
-Documentation = "https://nmfs-ost.github.io/mypackagename/"
-Repository = "https://github.com/nmfs-ost/mypackagename.git"
-Issues = "https://github.com/nmfs-ost/mypackagename/issues"
-Changelog = "https://github.com/nmfs-ost/mypackagename/blob/main/CHANGELOG.md"
+[tool.poetry.dependencies]
+python = ">=3.10,<3.14"
+numpy = ">=1.21.0"
+xarray = ">=2022.3.0"
+pandas = ">=1.3.0"
+echopype = ">=0.8.0"
+pyvista = ">=0.38.0"
+pyyaml = ">=6.0"
+jsonschema = ">=4.0.0"
+matplotlib = ">=3.5.0"
+aa-si-calibration = {git = "https://github.com/BLayman-NOAA/AA-SI_calibration.git", extras = ["echopype"]}
+aa-si-ml = {git = "https://github.com/BLayman-NOAA/AA-SI_ML.git"}
+aa-si-utils = {git = "https://github.com/BLayman-NOAA/AA-SI_Utils.git"}
+aa-si-visualization = {git = "https://github.com/BLayman-NOAA/AA-SI_Visualization.git"}
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0.0"
+pytest-cov = ">=4.0.0"
+black = ">=24.0.0"
+pylint = ">=3.0.0"
+pre-commit = ">=3.0.0"
+jupyterlab = ">=4.0.0"
+ipykernel = ">=6.0.0"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs = ">=1.5.0"
+mkdocs-material = ">=9.0.0"
+mkdocstrings = {version = ">=0.24.0", extras = ["python"]}
 
 # =============================================================================
 # Tool Configuration
 # =============================================================================
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "/src",
-    "/tests",
-]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/mypackagename"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -83,7 +81,7 @@ addopts = [
 ]
 
 [tool.coverage.run]
-source = ["src/mypackagename"]
+source = ["src/aa_si_pipeline_examples"]
 branch = true
 
 [tool.coverage.report]
@@ -112,5 +110,5 @@ max-line-length = 88
 
 [tool.pylint."messages control"]
 disable = [
-    "missing-module-docstring",  # Often not needed for simple modules
+    "missing-module-docstring",
 ]
