@@ -2,17 +2,16 @@
 
 <div align="center">
 
-# NOAA Fisheries AA-SI Python Package Template
+# AA-SI Full Pipeline Examples
 
-**A modern Python package template for NOAA Fisheries Active Acoustics Strategic Initiative projects**
+**Example Jupyter notebooks demonstrating end-to-end active acoustics data processing for NOAA Fisheries AA-SI**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 [Getting Started](#getting-started) •
-[Customization Checklist](#customization-checklist) •
-[Development](#development) •
+[Example Notebooks](#example-notebooks) •
 [Project Structure](#project-structure)
 
 </div>
@@ -21,137 +20,89 @@
 
 ## Getting Started
 
-### Use This Template
-
-1. Click the **"Use this template"** button on GitHub
-2. Name your new repository
-3. Clone your new repository locally
-4. Follow the [Customization Checklist](#customization-checklist) below
-
-### Requirements
+### Prerequisites
 
 - Python 3.10 or higher
-- pip
-
----
-
-## Customization Checklist
-
-After creating your repository from this template, complete the following steps:
-
-### 1. Rename the Package
-
-Replace all instances of `mypackagename` with your actual package name:
-
-| Location | Action |
-|----------|--------|
-| `src/mypackagename/` | Rename the folder |
-| `pyproject.toml` | Update `name`, URLs, and tool paths |
-| `src/mypackagename/__init__.py` | Update imports and docstring |
-| `tests/test_package.py` | Update import statements |
-
-### 2. Update Project Metadata
-
-Edit `pyproject.toml`:
-
-- `name` - Your package name
-- `version` - Start with `0.1.0`
-- `description` - Brief description of your package
-- `authors` / `maintainers` - Your information
-- `keywords` - Relevant search terms
-
-### 3. Update URLs
-
-In `pyproject.toml`, update `[project.urls]` with your repository information.
-
-### 4. Add Dependencies
-
-Add your package dependencies to the `dependencies` list in `pyproject.toml`.
-
-### 5. Update Documentation
-
-| File | Action |
-|------|--------|
-| `README.md` | Replace with your project documentation |
-| `CHANGELOG.md` | Update links to your repository |
-| `NOTICE` | Update copyright information |
-| `LICENSE` | Verify Apache 2.0 meets your needs |
-
-### 6. Clean Up
-
-- Delete this checklist section after completing setup
-- Make your first commit
-
----
-
-## Development
+- [Poetry](https://python-poetry.org/) for dependency management
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/nmfs-ost/your-repo-name.git
-cd your-repo-name
+git clone https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example.git
+cd AA-SI_Full_Pipeline_Example
 
-# Create a virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# Install dependencies with Poetry
+poetry install
 
-# Install in development mode
-pip install -e ".[dev]"
-
-# Set up pre-commit hooks
-pre-commit install
+# Set up pre-commit hooks (optional)
+poetry run pre-commit install
 ```
 
-### Running Tests
+### Running the Notebooks
+
+After installation, open any notebook in `example_notebooks/` with JupyterLab or VS Code:
 
 ```bash
-pytest
-pytest --cov=mypackagename
+poetry run jupyter lab
 ```
 
-### Code Quality
+Select the Poetry environment as your Jupyter kernel.
 
-```bash
-black src/ tests/
-pylint src/mypackagename
-pre-commit run --all-files
-```
+---
 
-### Building
+## Example Notebooks
 
-```bash
-pip install build
-python -m build
-```
+| Notebook | Description |
+|----------|-------------|
+| [NEFSC Use Case 1](example_notebooks/NEFSC_use_case_example_1/) | End-to-end pipeline with EK60 data: raw conversion, calibration comparison, Sv computation, and visualization |
+| [NEFSC Use Case 2](example_notebooks/NEFSC_use_case_example_2/) | Extended pipeline with multi-file combination, ML clustering (HDBSCAN), and 3D PyVista export |
+| [NEFSC Use Case 2 (Refactored)](example_notebooks/NEFSC_use_case_example_2_refactored/) | Refactored version of Use Case 2 |
+| [Zooplankton Example](example_notebooks/zooplankton_example/) | Zooplankton-focused processing pipeline |
+
+### AA-SI Packages Used
+
+These notebooks demonstrate the following AA-SI packages working together:
+
+- **[aa-si-calibration](https://github.com/BLayman-NOAA/AA-SI_calibration)** — Calibration parameter extraction, standardized file I/O, and calibration comparison
+- **[aa-si-ml](https://github.com/BLayman-NOAA/AA-SI_ML)** — ML-based data preprocessing and HDBSCAN clustering
+- **[aa-si-utils](https://github.com/BLayman-NOAA/AA-SI_Utils)** — Masking, seafloor removal, and general utilities
+- **[aa-si-visualization](https://github.com/BLayman-NOAA/AA-SI_Visualization)** — Echogram plotting and Sv difference visualization
 
 ---
 
 ## Project Structure
 
 ```
-├── .gitignore
-├── .pre-commit-config.yaml
-├── .pylintrc
+├── pyproject.toml              # Dependency management (Poetry)
+├── README.md
 ├── CHANGELOG.md
 ├── LICENSE
 ├── NOTICE
-├── pyproject.toml
-├── README.md
-├── src/
-│   └── mypackagename/
-│       └── __init__.py
+├── example_notebooks/
+│   ├── calibration_files/      # Shared calibration data
+│   ├── line_files/             # Shared line/overlay data
+│   ├── NEFSC_use_case_example_1/
+│   │   ├── NEFSC_use_case_example_1.ipynb
+│   │   ├── NEFSC_use_case_1_raw_files/
+│   │   ├── NetCDF-files/
+│   │   ├── Sv-files/
+│   │   ├── Output-Logs/
+│   │   └── standardized_cal_files/
+│   ├── NEFSC_use_case_example_2/
+│   │   └── ...
+│   ├── NEFSC_use_case_example_2_refactored/
+│   │   └── ...
+│   └── zooplankton_example/
+│       └── ...
 └── tests/
-    ├── conftest.py
-    └── test_package.py
 ```
 
 ---
 
 ## License
 
-This template uses the Apache License 2.0. Verify this license meets your project requirements before use.
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 ---
 

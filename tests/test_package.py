@@ -1,32 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: NOAA Fisheries
 """
-Sample test file demonstrating pytest structure.
+Tests for AA-SI pipeline example notebooks.
 
 Run tests with: pytest
-Run with coverage: pytest --cov=aa_si_pipeline_examples
 """
 
-import aa_si_pipeline_examples
+from pathlib import Path
 
 
-def test_version_exists():
-    """Test that the package has a version string."""
-    assert hasattr(aa_si_pipeline_examples, "__version__")
-    assert isinstance(aa_si_pipeline_examples.__version__, str)
+EXAMPLE_NOTEBOOKS_DIR = Path(__file__).parent.parent / "example_notebooks"
 
 
-def test_version_format():
-    """Test that version follows semantic versioning format (X.Y.Z)."""
-    version = aa_si_pipeline_examples.__version__
-    # Skip detailed check for dev versions (package not installed)
-    if version == "0.0.0.dev":
-        return
-    parts = version.split(".")
-    assert len(parts) >= 2, "Version should have at least major.minor"
-    # Check that parts are numeric (allowing for pre-release suffixes)
-    assert parts[0].isdigit(), "Major version should be numeric"
-    assert parts[1].isdigit(), "Minor version should be numeric"
+def test_example_notebooks_exist():
+    """Verify that example notebook directories contain .ipynb files."""
+    notebooks = list(EXAMPLE_NOTEBOOKS_DIR.rglob("*.ipynb"))
+    assert len(notebooks) > 0, "No example notebooks found"
 
 
 # =============================================================================

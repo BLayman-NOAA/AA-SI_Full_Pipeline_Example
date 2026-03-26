@@ -30,7 +30,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
 ]
-packages = [{include = "aa_si_pipeline_examples", from = "src"}]
 
 [tool.poetry.urls]
 Homepage = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example"
@@ -73,22 +72,10 @@ mkdocstrings = {version = ">=0.24.0", extras = ["python"]}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
 addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
-]
-
-[tool.coverage.run]
-source = ["src/aa_si_pipeline_examples"]
-branch = true
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "if __name__ == .__main__.:",
 ]
 
 [tool.black]
@@ -99,11 +86,9 @@ include = '\.pyi?$'
 [tool.isort]
 profile = "black"
 line_length = 88
-src_paths = ["src", "tests"]
 
 [tool.pylint.main]
 py-version = "3.10"
-source-roots = ["src"]
 
 [tool.pylint.format]
 max-line-length = 88
