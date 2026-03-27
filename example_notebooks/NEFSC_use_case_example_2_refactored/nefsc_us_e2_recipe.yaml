@@ -4,11 +4,27 @@
 # All user-configurable parameters for the pipeline, organized by stage.
 
 # -----------------------------------------------------------------------------
+# Data Retrieval: NCEI query and download parameters
+# -----------------------------------------------------------------------------
+data_retrieval:
+  # ISO 8601 format: "YYYY-MM-DDTHH:MM:SS" — all components after the date are optional.
+  # Valid examples: "2016-07-25", "2016-07-25T21", "2016-07-25T21:44", "2016-07-25T21:44:25"
+  file_time_start: "2016-07-25T20:58"
+  # Note: a date-only value (e.g. "2016-07-25") resolves to midnight (00:00:00), not end-of-day.
+  # To include all files on that day, use "2016-07-25T23:59" or add an explicit time.
+  file_time_end: "2016-07-25T21:45"
+  filters:
+    CRUISE_NAME: "HB1603"
+  companion_extensions:
+    - ".bot"
+    - ".idx"
+
+# -----------------------------------------------------------------------------
 # Local Environment: directories, filenames, initial setup
 # -----------------------------------------------------------------------------
 local_environment:
   initial_setup:
-    raw_input_folder: "./raw_file_inputs"
+    raw_input_folder: "./downloaded_raw_file_inputs"
     cal_input_folder: "../calibration_files/HB201607_cal"
     output_base: "./nefsc_uc_e2_cal_outputs"
     netcdf_output_folder: "./NetCDF-files"
