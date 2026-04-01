@@ -57,7 +57,8 @@ Select the Poetry environment as your Jupyter kernel.
 |----------|-------------|
 | [NEFSC Use Case 1](example_notebooks/NEFSC_use_case_example_1/) | End-to-end pipeline with EK60 data: raw conversion, calibration comparison, Sv computation, and visualization |
 | [NEFSC Use Case 2](example_notebooks/NEFSC_use_case_example_2/) | Extended pipeline with multi-file combination, ML clustering (HDBSCAN), and 3D PyVista export |
-| [NEFSC Use Case 2 (Refactored)](example_notebooks/NEFSC_use_case_example_2_refactored/) | Refactored version of Use Case 2 |
+| [NEFSC Use Case 2 (Refactored)](example_notebooks/NEFSC_use_case_example_2_refactored/) | Refactored Use Case 2 with multiple notebook variants (granular, two-pass) and a YAML recipe |
+| [Workshop Example](example_notebooks/Workshop_example/) | Workshop-oriented pipeline example with a YAML recipe |
 | [Zooplankton Example](example_notebooks/zooplankton_example/) | Zooplankton-focused processing pipeline |
 
 ### AA-SI Packages Used
@@ -85,6 +86,7 @@ These notebooks demonstrate the following AA-SI packages working together:
 │   ├── NEFSC_use_case_example_1/
 │   │   ├── NEFSC_use_case_example_1.ipynb
 │   │   ├── NEFSC_use_case_1_raw_files/
+│   │   ├── NEFSC_use_case_1_json_files/
 │   │   ├── NetCDF-files/
 │   │   ├── Sv-files/
 │   │   ├── Output-Logs/
@@ -92,6 +94,14 @@ These notebooks demonstrate the following AA-SI packages working together:
 │   ├── NEFSC_use_case_example_2/
 │   │   └── ...
 │   ├── NEFSC_use_case_example_2_refactored/
+│   │   ├── nefsc_uc_e2_refactored.ipynb
+│   │   ├── nefsc_uc_e2_refactored_two_pass.ipynb
+│   │   ├── nefsc_uc_e2_granular.ipynb
+│   │   ├── nefsc_us_e2_recipe.yaml
+│   │   └── ...
+│   ├── Workshop_example/
+│   │   ├── workshop_example.ipynb
+│   │   ├── workshop_recipe.yaml
 │   │   └── ...
 │   └── zooplankton_example/
 │       └── ...

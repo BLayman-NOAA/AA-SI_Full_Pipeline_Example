@@ -1,0 +1,149 @@
+# =============================================================================
+# AA-SI Workshop — Pipeline Recipe Configuration
+# =============================================================================
+# All user-configurable parameters for the pipeline, organized by stage.
+# Edit the values below to match your cruise, data, and analysis needs.
+
+# -----------------------------------------------------------------------------
+# Data Retrieval: NCEI query and download parameters
+# -----------------------------------------------------------------------------
+data_retrieval:
+  # ISO 8601 format: "YYYY-MM-DDTHH:MM:SS" — all components after the date are optional.
+  # Valid examples: "2016-07-25", "2016-07-25T21", "2016-07-25T21:44", "2016-07-25T21:44:25"
+  file_time_start: "2016-07-25T20:58"
+  # Note: a date-only value (e.g. "2016-07-25") resolves to midnight (00:00:00), not end-of-day.
+  # To include all files on that day, use "2016-07-25T23:59" or add an explicit time.
+  file_time_end: "2016-07-25T21:45"
+  filters:
+    CRUISE_NAME: "HB1603"
+  companion_extensions:
+    - ".bot"
+    - ".idx"
+
+# -----------------------------------------------------------------------------
+# Local Environment: directories, filenames, initial setup
+# -----------------------------------------------------------------------------
+local_environment:
+  initial_setup:
+    raw_input_folder: "./downloaded_raw_file_inputs"
+    cal_input_folder: "../calibration_files/HB201607_cal"
+    output_base: "./nefsc_uc_e2_cal_outputs"
+    netcdf_output_folder: "./NetCDF-files"
+    sv_output_folder: "./Sv-files"
+    output_logs_folder: "./Output-Logs"
+    raw_file_names: []  # Only populate if you don't want to include all raw files in the folder
+    clear_previous_json_logs: true
+
+  open_and_combine_raw_files:
+    sonar_model: "EK60"
+    include_bot: true
+
+# -----------------------------------------------------------------------------
+# Calibration: standardized calibration pipeline parameters
+# -----------------------------------------------------------------------------
+calibration:
+  calibration_pipeline:
+    record_author: "<Your Name>"     # Replace with your name
+    cruise_id: "HB1603"               # Must match the cruise being processed
+    short_filenames: true
+    keep_unused_standardized_files: true
+    conflict_resolution: "error"  # "interactive" or "error"
+
+# -----------------------------------------------------------------------------
+# Masking: seafloor, surface, frequency exclusions
+# -----------------------------------------------------------------------------
+masking:
+  create_data_mask:
+    seafloor_buffer_m: 100
+    frequencies_to_mask: [70, 120, 200]
+
+# -----------------------------------------------------------------------------
+# Noise Removal
+# -----------------------------------------------------------------------------
+noise_removal:
+  remove_noise:
+    noise_range_sample_num: 10
+    noise_ping_num: 5
+
+# -----------------------------------------------------------------------------
+# MVBS
+# -----------------------------------------------------------------------------
+mvbs:
+  compute_mvbs:
+    mvbs_range_bin: "2m"
+    mvbs_ping_time_bin: "10s"
+    mvbs_nan_threshold: 0.6
+
+# -----------------------------------------------------------------------------
+# Line Files and Overlay Styles
+# -----------------------------------------------------------------------------
+line_files:
+  line_name: "sw_dive_profile"
+  line_file_path: "../line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+  overlay_lines:
+    - var_suffix: "_fit"
+      style:
+        color: "red"
+        linewidth: 3.5
+
+# -----------------------------------------------------------------------------
+# Echogram Visualization Parameters
+# -----------------------------------------------------------------------------
+echogram_visualization:
+  plot_sv_echogram:
+    min_depth: 0
+    max_depth: 1800
+    ping_min: 0
+    ping_max: 515
+    x_axis_units: "seconds"
+    y_axis_units: "meters"
+
+# -----------------------------------------------------------------------------
+# Sv Comparison
+# -----------------------------------------------------------------------------
+sv_comparison:
+  sv_flag_thresholds:
+    critical_median: 2.0
+    large_median: 1.0
+    moderate_median: 0.5
+    critical_max: 4.0
+    large_max: 2.0
+    moderate_max: 1.0
+
+# -----------------------------------------------------------------------------
+# Machine Learning Parameters
+# -----------------------------------------------------------------------------
+ml:
+  cluster_colors:
+    - "#FFAD09"
+    - "#35E200"
+    - "#FF0000"
+    - "#2F00FF"
+    - "#DC0303"
+    - "#FFFB1C"
+    - "#4E9200"
+    - "#970021"
+    - "#8E00E0"
+    - "#017685FF"
+    - "#4100B9FF"
+
+  reshape_data_for_ml:
+    data_var: "Sv"
+    dataset_name: "ml_dataset"
+    feature_strategy: "mean_centered"
+    baseline_channel: 0
+
+  normalize_data:
+    method: "flatten"
+    shift_positive: false
+    normalization_name: "normalized_flatten_mean_centered"
+    feature_weights: [1, 1, 1]
+
+  hdbscan:
+    ml_result_name: "hdbscan_results"
+    plot_window: [0, 1800, 0, 515]
+    min_samples: 10
+    sample_size: 1000000
+    min_cluster_size: 1400
+    cluster_selection_method: "eom"
+    use_hdbscan: true
