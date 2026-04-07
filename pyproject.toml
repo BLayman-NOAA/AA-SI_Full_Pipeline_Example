@@ -5,6 +5,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "aa-si-pipeline-examples"
 version = "0.1.0"
+package-mode = false
 description = "Example pipeline notebooks demonstrating end-to-end active acoustics data processing for NOAA Fisheries AA-SI."
 readme = "README.md"
 license = "Apache-2.0"
