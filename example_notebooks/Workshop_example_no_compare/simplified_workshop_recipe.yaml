@@ -1,14 +1,8 @@
-# =============================================================================
-# AA-SI Workshop — Pipeline Recipe Configuration
-# =============================================================================
-# All user-configurable parameters for the pipeline, organized by stage.
-# Edit the values below to match your cruise, data, and analysis needs.
+# AA-SI Workshop Pipeline Recipe Configuration
 
-# -----------------------------------------------------------------------------
-# Data Retrieval: NCEI query and download parameters
-# -----------------------------------------------------------------------------
+# Data retrieval: NCEI query and download parameters
 data_retrieval:
-  # ISO 8601 format: "YYYY-MM-DDTHH:MM:SS" — all components after the date are optional.
+  # ISO 8601 format: "YYYY-MM-DDTHH:MM:SS" (all components after the date are optional)
   # Valid examples: "2016-07-25", "2016-07-25T21", "2016-07-25T21:44", "2016-07-25T21:44:25"
   file_time_start: "2016-07-25T20:58"
   # file_time_start: "2016-07-25T22"
@@ -25,9 +19,7 @@ data_retrieval:
     - ".bot"
     - ".idx"
 
-# -----------------------------------------------------------------------------
-# Local Environment: directories, filenames, initial setup
-# -----------------------------------------------------------------------------
+# Local environment: directories, filenames, and initial setup
 local_environment:
   initial_setup:
     raw_input_folder: "../raw_files/workshop_example"
@@ -43,9 +35,7 @@ local_environment:
     sonar_model: "EK60"
     include_bot: true
 
-# -----------------------------------------------------------------------------
 # Calibration: standardized calibration pipeline parameters
-# -----------------------------------------------------------------------------
 calibration:
   calibration_pipeline:
     record_author: "<Your Name>"     # Replace with your name
@@ -54,9 +44,7 @@ calibration:
     keep_unused_standardized_files: true
     conflict_resolution: "error"  # "interactive" or "error"
 
-# -----------------------------------------------------------------------------
-# Masking: seafloor, surface, frequency exclusions
-# -----------------------------------------------------------------------------
+# Masking: seafloor, surface, and frequency exclusions
 masking:
   remove_seafloor_from_mask:
     seafloor_buffer_m: 100
@@ -67,17 +55,13 @@ masking:
   mask_frequency_channels:
     frequencies_to_mask: [70, 120, 200]
 
-# -----------------------------------------------------------------------------
-# Noise Removal
-# -----------------------------------------------------------------------------
+# Noise removal
 noise_removal:
   remove_noise:
     noise_range_sample_num: 10
     noise_ping_num: 5
 
-# -----------------------------------------------------------------------------
 # MVBS
-# -----------------------------------------------------------------------------
 mvbs:
   mask_sparse_bins:
     range_bin: "2m"
@@ -87,9 +71,7 @@ mvbs:
     range_bin: "2m"
     ping_time_bin: "10s"
 
-# -----------------------------------------------------------------------------
-# Line Files and Overlay Styles
-# -----------------------------------------------------------------------------
+# Line files and overlay styles
 line_files:
   line_name: "sw_dive_profile"
   line_file_path: "../line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
@@ -99,9 +81,7 @@ line_files:
         color: "red"
         linewidth: 3.5
 
-# -----------------------------------------------------------------------------
-# Echogram Visualization Parameters
-# -----------------------------------------------------------------------------
+# Echogram visualization parameters
 echogram_visualization:
   plot_sv_echogram:
     min_depth: 0
@@ -111,9 +91,7 @@ echogram_visualization:
     x_axis_units: "seconds"
     y_axis_units: "meters"
 
-# -----------------------------------------------------------------------------
-# Machine Learning Parameters
-# -----------------------------------------------------------------------------
+# Machine learning parameters
 ml:
   cluster_colors:
     - "#F700FF"
