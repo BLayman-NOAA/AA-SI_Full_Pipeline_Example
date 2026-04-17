@@ -31,5 +31,7 @@
     "across_frequencies": [],
     "across_pings": []
   },
-  "missing_parameters": []
+  "missing_parameters": [
+    "Sonar/sonar_software_version"
+  ]
 }
