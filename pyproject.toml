@@ -1,0 +1,101 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "aa-si-pipeline-examples"
+version = "0.1.0"
+package-mode = false
+description = "Example pipeline notebooks demonstrating end-to-end active acoustics data processing for NOAA Fisheries AA-SI."
+readme = "README.md"
+license = "Apache-2.0"
+authors = ["NOAA Fisheries AA-SI"]
+keywords = [
+    "noaa",
+    "fisheries",
+    "acoustics",
+    "pipeline",
+    "sonar",
+    "echopype",
+    "echosounder",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+
+[tool.poetry.urls]
+Homepage = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example"
+Repository = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example.git"
+Issues = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example/issues"
+Changelog = "https://github.com/BLayman-NOAA/AA-SI_Full_Pipeline_Example/blob/main/CHANGELOG.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<=3.14"
+numpy = ">=1.21.0"
+xarray = ">=2022.3.0"
+pandas = ">=1.3.0"
+echopype = ">=0.8.0"
+pyvista = ">=0.38.0"
+pyyaml = ">=6.0"
+jsonschema = ">=4.0.0"
+matplotlib = ">=3.5.0"
+aa-si-calibration = {path = "../AA-SI_calibration", extras = ["echopype"], develop = true}
+aa-si-ml = {path = "../AA-SI_ML", develop = true}
+aa-si-utils = {path = "../AA-SI_Utils", develop = true}
+aa-si-visualization = {path = "../AA-SI_Visualization", develop = true}
+aa-recipe-manager = {path = "../AA-SI_recipe_manager", develop = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0.0"
+pytest-cov = ">=4.0.0"
+black = ">=24.0.0"
+pylint = ">=3.0.0"
+pre-commit = ">=3.0.0"
+jupyterlab = ">=4.0.0"
+ipykernel = ">=6.0.0"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs = ">=1.5.0"
+mkdocs-material = ">=9.0.0"
+mkdocstrings = {version = ">=0.24.0", extras = ["python"]}
+
+# =============================================================================
+# Tool Configuration
+# =============================================================================
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pylint.main]
+py-version = "3.10"
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-module-docstring",
+]
