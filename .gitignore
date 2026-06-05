@@ -3,6 +3,8 @@
 *.raw
 *.zarr
 *.vtk
+recipe_cache/
+example_recipes/outputs
 
 # Poetry
 poetry.lock
