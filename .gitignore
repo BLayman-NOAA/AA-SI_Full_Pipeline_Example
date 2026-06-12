@@ -5,6 +5,7 @@
 *.vtk
 recipe_cache/
 example_recipes/outputs
+exe_temp
 
 # Poetry
 poetry.lock

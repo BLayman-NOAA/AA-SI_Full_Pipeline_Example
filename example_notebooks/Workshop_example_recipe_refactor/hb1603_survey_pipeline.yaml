@@ -1,10 +1,10 @@
 # =============================================================================
 # HB1603 Acoustic Survey — End-to-End Pipeline Recipe
 # =============================================================================
-# Recipe format version 1. Run this through aa-recipe-manager to generate
+# Recipe format version 1. Run this through aa-recipe to generate
 # a Jupyter notebook or execute the pipeline directly.
 #
-# Usage: aa-recipe-manager generate hb1603_survey_pipeline.yaml
+# Usage: aa-recipe generate hb1603_survey_pipeline.yaml
 
 recipe:
   name: "hb1603_survey_pipeline"
