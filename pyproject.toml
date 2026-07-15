@@ -59,11 +59,14 @@ matplotlib = ">=3.5.0"
 #               -e ../AA-SI_calibration \
 #               -e ../AA-SI_ML \
 #               -e ../AA-SI_Visualization
-aa-si-calibration = {git = "https://github.com/BLayman-NOAA/AA-SI_calibration.git", extras = ["echopype"]}
+# The "gcs" extras pull in gcsfs (fsspec's gs:// driver) so the GCS-bucket
+# example recipes (processing_levels_pipeline_gcs.yaml) work out of the box;
+# credentials come from Application Default Credentials.
+aa-si-calibration = {git = "https://github.com/BLayman-NOAA/AA-SI_calibration.git", extras = ["echopype", "gcs"]}
 aa-si-ml = {git = "https://github.com/BLayman-NOAA/AA-SI_ML.git"}
-aa-si-utils = {git = "https://github.com/BLayman-NOAA/AA-SI_Utils.git"}
+aa-si-utils = {git = "https://github.com/BLayman-NOAA/AA-SI_Utils.git", extras = ["gcs"]}
 aa-si-visualization = {git = "https://github.com/BLayman-NOAA/AA-SI_Visualization.git"}
-aa-recipe-manager = {git = "https://github.com/BLayman-NOAA/AA-SI_recipe_manager.git"}
+aa-recipe-manager = {git = "https://github.com/BLayman-NOAA/AA-SI_recipe_manager.git", extras = ["gcs"]}
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0.0"

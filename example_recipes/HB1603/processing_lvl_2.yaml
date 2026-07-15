@@ -38,10 +38,11 @@ steps:
       ds_Sv: ${compute_sv.ds_Sv}
       echodata: ${inputs.echodata}
     params:
-      use_platform_vertical_offsets: true
+      depth_offset: 6
 
   - id: ep_add_splitbeam_angle
     op: ep_add_splitbeam_angle
+    checkpoint: save
     inputs:
       ds_Sv: ${ep_add_depth.ds_Sv}
       echodata: ${inputs.echodata}
@@ -58,14 +59,26 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
+  # - id: detect_seafloor
+  #   op: detect_seafloor
+  #   depends_on: [log_seafloor_stats]
+  #   inputs:
+  #     ds_Sv: ${compute_sv.ds_Sv}
+  #     echodata: ${inputs.echodata}
+  #   params:
+  #     min_valid_depth_m: 10.0
+
   - id: detect_seafloor
-    op: detect_seafloor
-    depends_on: [log_seafloor_stats]
+    op: ep_detect_seafloor
+    checkpoint: save
     inputs:
-      ds_Sv: ${compute_sv.ds_Sv}
-      echodata: ${inputs.echodata}
+      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
     params:
-      min_valid_depth_m: 10.0
+      method: "basic"
+      method_params:
+        var_name: "Sv"
+        channel: "GPT  38 kHz 0090720346bc 1-1 ES38B"
+
 
   - id: create_seafloor_mask
     op: create_seafloor_mask

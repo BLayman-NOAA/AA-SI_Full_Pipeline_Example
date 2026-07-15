@@ -55,7 +55,7 @@ steps:
 
   - id: normalize_ml
     op: normalize_ml_data
-    checkpoint: always
+    checkpoint: save
     inputs:
       ds_ml: ${add_aux_features.ds_ml_ready}
     params:
