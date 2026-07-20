@@ -29,6 +29,7 @@ temp_dir:   gs://ggn-nmfs-aa-dev-1-data/Test_Layman/user_cache/hb1603/exe_temp
 # written through pathlib and cannot target object storage yet.
 outputs_dir: ./outputs
 
+# survey-level cache
 survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/Survey/survey_cache
 
 # fsspec storage options for remote paths. Leave commented for Application
