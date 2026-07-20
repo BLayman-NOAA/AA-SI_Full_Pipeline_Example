@@ -95,6 +95,7 @@ steps:
 
   - id: embed_results
     op: embed_clustering_results
+    checkpoint: always
     inputs:
       ds_normalized: ${normalize_ml.ds_normalized}
       clustering_results: ${run_hdbscan.clustering_results}
