@@ -1,0 +1,180 @@
+# HB1603 Acoustic Survey - Processing Levels Pipeline (GCS Bucket, Parallel)
+# User-level Recipe
+#
+# User-level counterpart to survey_recipe_parallel.yaml. Levels 1 through 3 are
+# byte-for-byte the same includes with the same input_overrides as that recipe,
+# which is the ONLY way this recipe hits the survey-tier checkpoints that
+# recipe publishes.
+#
+# WHY THAT MATTERS. Checkpoints are content-addressed by a Merkle hash over
+# each step's own definition (including its ${...} input reference strings)
+# plus its parents' hashes. The cache is therefore STRUCTURAL, not semantic: it
+# cannot tell that a differently-composed pipeline produced identical bytes.
+# Comparing survey_recipe.yaml against survey_recipe_parallel.yaml, only
+# initial_setup and gen_cal_mapping share a hash; all 17 steps from read_raw
+# onward differ, because changing read_raw's shape changes every descendant.
+#
+# Practical consequences:
+#   * user_recipe.yaml         falls back on survey_recipe.yaml only.
+#   * user_recipe_parallel.yaml (this file) falls back on
+#     survey_recipe_parallel.yaml only.
+#   * The two pairs share no cached work. Populate the survey tier with the
+#     matching survey recipe:
+#         aa-recipe run survey_recipe_parallel.yaml --cache-write-tier survey
+#         aa-recipe run user_recipe_parallel.yaml
+#   * Editing any level 1-3 include or input_override below breaks the match
+#     and silently recomputes everything. Keep them in sync with
+#     survey_recipe_parallel.yaml.
+#
+# Levels 1-3 carry the GCS tuning described in survey_recipe_parallel.yaml
+# (per-file fan-out, upload-minimized checkpoints, chunking before
+# remove_noise), which took that pipeline from 1313.0s to 536.3s. Level 4 is
+# unchanged: its own steps are compute-bound, not upload-bound.
+
+recipe:
+  name: "processing_levels_pipeline_gcs_parallel"
+  description: "HB1603 GCS user pipeline built on the parallel survey-level checkpoints."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    # Content-fingerprint the (remote) folder so the cache key tracks the file set
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+
+  # Default display window shared by every plotting step in this pipeline
+  # You can override these by hardcoding values for a specific step or sub-recipe
+  min_depth:
+    type: float
+    default: 0
+  max_depth:
+    type: float
+    default: 1800
+  ping_min:
+    type: int
+    default: 0
+  ping_max:
+    type: int
+    default: 515
+  x_axis_units:
+    type: str
+    default: "seconds"
+  y_axis_units:
+    type: str
+    default: "meters"
+
+
+steps:
+
+  # --- Levels 1-3: KEEP IDENTICAL to survey_recipe_parallel.yaml ----------
+  # Any edit here changes these steps' hashes and loses the survey-tier hits.
+
+  - include: sub_recipes/processing_lvl_1_gcs_parallel.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      # Data time range: clear both to process the whole bucket folder.
+      file_time_start: "2016-07-25T20:58"
+      file_time_end: "2016-07-25T21:45"
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  # Must follow level 1 (parallel) directly: its steps continue the same
+  # per-file mapped chain, and its fan-in reassembles the survey.
+  - include: sub_recipes/processing_lvl_2_parallel.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      # Fixed transducer depth below the waterline for the whole survey.
+      depth_offset: 6
+      # seafloor mask
+      seafloor_buffer_m: 100
+      # surface mask
+      surface_depth_m: 10.0
+      # parameters for echopype's remove_background_noise:
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+      # Must stay below the window's real ping count (~516 here) or it clamps
+      # to a single chunk and silently does nothing.
+      noise_chunk_ping_time: 100
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 100
+
+  - include: sub_recipes/processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      # MVBS bin size:
+      range_bin: "20m"
+      ping_time_bin: "20s"
+      nan_threshold: 0.6 # mask bin if NAN's exceed this fraction of data in the cell
+
+  # --- User-level additions (no survey-tier equivalent) -------------------
+
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${add_line_overlay.ds}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+      overlay_lines:
+        - var: "sw_dive_profile_fit"
+          style:
+            color: "red"
+            linewidth: 3.5
+
+  # echodata is deliberately NOT wired here, unlike user_recipe.yaml.
+  # combine_raw is a per-file MAPPED step in the parallel pipeline, so
+  # ${combine_raw.echodata} is a LIST of one EchoData per raw file, not the
+  # single survey-wide object add_auxiliary_features expects. The input is
+  # optional and only needed for the 'seafloor_depth' / 'altitude' features;
+  # this configuration uses 'cell_cv', which is served by cell_stats_sv.
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}

@@ -29,6 +29,30 @@ inputs:
   cell_stats_sv:
     type: dataset
     description: "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
+  min_depth:
+    type: float
+    default: 0
+    description: "Shallowest depth in meters shown by the ML and clustering echograms."
+  max_depth:
+    type: float
+    default: 1800
+    description: "Deepest depth in meters shown by the ML and clustering echograms."
+  ping_min:
+    type: int
+    default: 0
+    description: "First ping index shown by the ML and clustering echograms."
+  ping_max:
+    type: int
+    default: 515
+    description: "Last ping index shown by the ML and clustering echograms."
+  x_axis_units:
+    type: str
+    default: "seconds"
+    description: "Units for the x-axis of the ML and clustering echograms."
+  y_axis_units:
+    type: str
+    default: "meters"
+    description: "Units for the y-axis of the ML and clustering echograms."
 
 steps:
 
@@ -61,7 +85,7 @@ steps:
     params:
       method: "flatten"
       dataset_name: "ml_dataset"
-      normalization_name: "normalized_flatten_mean_centered"
+      normalization_name: "norm_flat_clr"
       shift_positive: false
 
   - id: plot_normalized_ml
@@ -72,13 +96,14 @@ steps:
       ds_Sv: ${inputs.sv_clean_unmasked}
     params:
       dataset_name: "ml_dataset"
-      normalization_name: "normalized_flatten_mean_centered"
-      min_depth: 0
-      max_depth: 1800
-      ping_min: 0
-      ping_max: 515
-      x_axis_units: "seconds"
-      y_axis_units: "meters"
+      normalization_name: "norm_flat_clr"
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
 
   - id: run_hdbscan
     op: run_hdbscan
@@ -86,7 +111,7 @@ steps:
       ds_normalized: ${normalize_ml.ds_normalized}
     params:
       dataset_name: "ml_dataset"
-      normalization_name: "normalized_flatten_mean_centered"
+      normalization_name: "norm_flat_clr"
       ml_result_name: "hdbscan_results"
       min_cluster_size_fraction: 0.02
       min_samples: 4
@@ -115,7 +140,15 @@ steps:
     params:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
-      plot_window: [0, 1800, 0, 515]
+      # [min_depth, max_depth, ping_min, ping_max]
+      plot_window:
+        - ${inputs.min_depth}
+        - ${inputs.max_depth}
+        - ${inputs.ping_min}
+        - ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
       overlay_line_var: ${inputs.overlay_line_var}
       cluster_colors:
         - "#9D00FF"

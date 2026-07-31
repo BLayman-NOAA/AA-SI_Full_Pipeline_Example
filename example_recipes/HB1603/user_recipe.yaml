@@ -1,0 +1,135 @@
+# HB1603 Acoustic Survey - Processing Levels Pipeline (GCS Bucket)
+# User-level Recipe
+
+recipe:
+  name: "processing_levels_pipeline_gcs"
+  description: "HB1603 processing levels pipeline reading all inputs from a GCS bucket."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    # Content-fingerprint the (remote) folder so the cache key tracks the file set
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+
+  # Default display window shared by every plotting step in this pipeline
+  # You can override these by hardcoding values for a specific step or sub-recipe
+  min_depth:
+    type: float
+    default: 0
+  max_depth:
+    type: float
+    default: 1800
+  ping_min:
+    type: int
+    default: 0
+  ping_max:
+    type: int
+    default: 515
+  x_axis_units:
+    type: str
+    default: "seconds"
+  y_axis_units:
+    type: str
+    default: "meters"
+
+
+steps:
+
+  - include: sub_recipes/processing_lvl_1_gcs.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      # Data time range: clear both to process the whole bucket folder.
+      file_time_start: "2016-07-25T20:58"
+      file_time_end: "2016-07-25T21:45"
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  - include: sub_recipes/processing_lvl_2.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      # Fixed transducer depth below the waterline for the whole survey.
+      depth_offset: 6
+      # seafloor mask
+      seafloor_buffer_m: 100
+      # surface mask
+      surface_depth_m: 10.0
+      # parameters for echopype's remove_background_noise:
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+
+  - id: plot_sv_clean
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${remove_noise.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 100
+
+  - include: sub_recipes/processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      # MVBS bin size:
+      range_bin: "20m"
+      ping_time_bin: "20s"
+      nan_threshold: 0.6 # mask bin if NAN's exceed this fraction of data in the cell
+
+  - id: add_line_overlay
+    op: add_line_overlay
+    inputs:
+      ds: ${compute_mvbs.ds_MVBS}
+    params:
+      line_file_path: ${inputs.line_file_path}
+      line_name: "sw_dive_profile"
+
+  - id: plot_mvbs
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${add_line_overlay.ds}
+      ds_Sv_source: ${mask_sparse.ds_Sv}
+    params:
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}
+      dpi: 50
+      overlay_lines:
+        - var: "sw_dive_profile_fit"
+          style:
+            color: "red"
+            linewidth: 3.5
+
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs_with_lines: ${add_line_overlay.ds}
+      echodata: ${combine_raw.echodata}
+      overlay_line_var: "sw_dive_profile"
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      cell_stats_sv: ${compute_cell_stats.ds_Sv}
+      min_depth: ${inputs.min_depth}
+      max_depth: ${inputs.max_depth}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
+      x_axis_units: ${inputs.x_axis_units}
+      y_axis_units: ${inputs.y_axis_units}

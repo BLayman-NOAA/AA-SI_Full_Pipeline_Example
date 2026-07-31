@@ -1,0 +1,163 @@
+# Processing Level 1 (GCS, Parallel) - Per-File Raw Ingest and Calibration
+#
+# GCS-tuned per-file variant of processing_lvl_1_gcs.yaml. Two changes, both
+# aimed at the finding that ~71% of the survey_recipe.yaml GCS run was
+# checkpoint upload, not compute:
+#
+#   1. combine_raw is NO LONGER CHECKPOINTED. In this per-file shape it is a
+#      materialize-only step (it opens one already-written zarr store), so its
+#      checkpoint was a full re-upload of data read_raw had just written.
+#      Measured cost of that upload in the baseline run: 180.08s of 210.60s.
+#      Nothing is lost on re-run: compute_sv downstream IS checkpointed, so the
+#      backward planner prunes read_raw and combine_raw entirely on a cache hit.
+#
+#   2. Each file selects its OWN calibration parameters, via
+#      raw_file_path: ${_item}. mapping_dict is keyed per raw filename;
+#      without this, every file silently reuses the first file's channel
+#      mapping. gen_cal_mapping still runs once for the survey, so the
+#      calibration files are parsed once, not once per raw file.
+#
+# The per-file fan-out also lets `--executor dask` overlap the per-file network
+# I/O, which is where this pipeline's time actually goes. See
+# survey_recipe_parallel.yaml's header for whether that is worth trying.
+#
+# Parallel shape:
+#
+#   initial_setup
+#     |-- gen_cal_mapping (once, survey-wide) ----+
+#     +-- read_raw          (per file)            |
+#           combine_raw     (per file) -----------+
+#           extract_cal_params (per file, picks this file's mapping)
+
+recipe:
+  name: "processing_lvl_1_gcs_parallel"
+  description: "Per-file raw ingest and per-file calibration selection (gs:// inputs)."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    description: "Folder containing the raw acoustic files (local path or gs:// URL)."
+  cal_input_folder:
+    type: path
+    description: "Folder containing manufacturer calibration files (local path or gs:// URL)."
+  calibration_outputs:
+    type: str
+    default: "calibration"
+    description: "Subdirectory name under the pipeline outputs folder for calibration artifacts."
+  cruise_id:
+    type: str
+    description: "Cruise identifier used in calibration mapping."
+  record_author:
+    type: str
+    default: "<Your Name>"
+  sonar_model:
+    type: str
+    default: "EK60"
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Optional subset of filenames within raw_input_folder to use. Empty list
+      means "use every .raw file in the folder".
+  file_time_start:
+    type: str
+    required: false
+    description: >
+      Optional inclusive ISO datetime restricting processing to raw files whose
+      filename-encoded time (D{YYYYMMDD}-T{HHMMSS}) is at or after this bound.
+      Applied to both the processed file set and the calibration scan; leave
+      unset to process every file.
+  file_time_end:
+    type: str
+    required: false
+    description: "Optional inclusive ISO datetime upper bound; see file_time_start."
+  ping_time_chunk:
+    type: int
+    default: 1000
+    description: >
+      Chunk length along ping_time for each file's EchoData. Because
+      combine_raw is no longer checkpointed here, this no longer drives a
+      gs:// write; it only sets in-memory chunking for the per-file Sv
+      computation downstream.
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      calibration_outputs: ${inputs.calibration_outputs}
+      raw_file_names: ${inputs.raw_file_names}
+      clear_previous_json_logs: true
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  # Runs once for the whole survey. Builds calibration_dict and mapping_dict,
+  # the latter keyed per raw filename; the per-file extract_cal_params
+  # instances below only index into these, they do not re-parse anything.
+  - id: gen_cal_mapping
+    op: generate_standardized_cal_mapping
+    params:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      output_base: ${initial_setup.calibration_output_dir}
+      cruise_id: ${inputs.cruise_id}
+      record_author: ${inputs.record_author}
+      short_filenames: true
+      keep_unused: true
+      conflict_resolution: "error"
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+
+  # --- Per-file fan-out starts here --------------------------------------
+  # Every step from here through the end of processing_lvl_2_parallel.yaml
+  # shares this map_over source, forming ONE mapped chain. A whole chain
+  # instance runs as a single task, so none of these intermediate values ever
+  # crosses a task boundary -- which is what keeps the per-file shape cheap
+  # under a concurrent executor.
+  #
+  # checkpoint: never -- the output is a temp_dir store path deleted at the end
+  # of the run, so caching it would leave a dangling path on the next run.
+  #
+  # NOTE: no `dask_config: scheduler: processes` here, unlike the recipe_manager
+  # copy of this file. This work is network-bound rather than GIL-bound, and on
+  # Windows the process pool pays a large fixed spawn + echopype re-import cost
+  # per instance. Threads are the right default here.
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: never
+    inputs:
+      raw_file_paths:
+        - ${_item}          # a single-element list: just this file
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: true
+      intermediate_format: "zarr"
+
+  # Materializes THIS file's store as an EchoData object. Not a survey-wide
+  # fan-in: combine_raw_files accepts a single-file list and simply opens it.
+  # Deliberately NOT checkpointed -- see this file's header, item 1.
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: never
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+    params:
+      ping_time_chunk: ${inputs.ping_time_chunk}
+
+  # Selects (does not recompute) this file's channel-to-calibration mapping
+  # out of the shared dicts built once above.
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      calibration_dict: ${gen_cal_mapping.calibration_dict}
+      mapping_dict: ${gen_cal_mapping.mapping_dict}
+      echodata: ${combine_raw.echodata}
+    params:
+      raw_file_path: ${_item}

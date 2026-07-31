@@ -21,6 +21,30 @@ inputs:
   env_params:
     type: dict
     description: "Environmental parameters extracted from the standardized mapping."
+  depth_offset:
+    type: float
+    default: 0.0
+    description: >
+      Transducer depth in meters below the waterline, added to range to give
+      depth. Fixed for the whole survey rather than derived per ping.
+  seafloor_buffer_m:
+    type: float
+    default: 0.0
+    description: >
+      Metres above the detected seafloor at which the seafloor mask starts
+      excluding samples, so the bottom echo and its ringing are dropped.
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth in meters above which the surface mask excludes samples."
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Number of range samples per bin used for background noise estimation."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Number of pings per bin used for background noise estimation."
 
 steps:
 
@@ -38,11 +62,10 @@ steps:
       ds_Sv: ${compute_sv.ds_Sv}
       echodata: ${inputs.echodata}
     params:
-      depth_offset: 6
+      depth_offset: ${inputs.depth_offset}
 
   - id: ep_add_splitbeam_angle
     op: ep_add_splitbeam_angle
-    checkpoint: save
     inputs:
       ds_Sv: ${ep_add_depth.ds_Sv}
       echodata: ${inputs.echodata}
@@ -59,25 +82,25 @@ steps:
     params:
       min_valid_depth_m: 10.0
 
-  # - id: detect_seafloor
-  #   op: detect_seafloor
-  #   depends_on: [log_seafloor_stats]
-  #   inputs:
-  #     ds_Sv: ${compute_sv.ds_Sv}
-  #     echodata: ${inputs.echodata}
-  #   params:
-  #     min_valid_depth_m: 10.0
-
   - id: detect_seafloor
-    op: ep_detect_seafloor
-    checkpoint: save
+    op: detect_seafloor
+    depends_on: [log_seafloor_stats]
     inputs:
-      ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${inputs.echodata}
     params:
-      method: "basic"
-      method_params:
-        var_name: "Sv"
-        channel: "GPT  38 kHz 0090720346bc 1-1 ES38B"
+      min_valid_depth_m: 10.0
+
+  # - id: detect_seafloor
+  #   op: ep_detect_seafloor
+  #   checkpoint: save
+  #   inputs:
+  #     ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
+  #   params:
+  #     method: "basic"
+  #     method_params:
+  #       var_name: "Sv"
+  #       channel: "GPT  38 kHz 0090720346bc 1-1 ES38B"
 
 
   - id: create_seafloor_mask
@@ -86,14 +109,14 @@ steps:
       ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
       seafloor_depth: ${detect_seafloor.seafloor_depth}
     params:
-      seafloor_buffer_m: 100
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
 
   - id: create_surface_mask
     op: create_surface_mask
     inputs:
       ds_Sv: ${compute_sv.ds_Sv}
     params:
-      surface_depth_m: 10.0
+      surface_depth_m: ${inputs.surface_depth_m}
 
   - id: create_frequency_mask
     op: create_frequency_mask
@@ -124,5 +147,5 @@ steps:
     inputs:
       ds_Sv: ${apply_mask.ds_Sv}
     params:
-      noise_range_sample_num: 10
-      noise_ping_num: 5
+      noise_range_sample_num: ${inputs.noise_range_sample_num}
+      noise_ping_num: ${inputs.noise_ping_num}

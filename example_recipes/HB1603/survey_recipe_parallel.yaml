@@ -1,0 +1,192 @@
+# HB1603 Acoustic Survey - Processing Levels Pipeline (GCS Bucket, Parallel)
+# Survey-level Recipe, tuned for a bandwidth-limited gs:// cache.
+#
+# WHAT THIS CHANGES vs survey_recipe.yaml, and why
+#
+# A baseline `aa-recipe run survey_recipe.yaml --cache-write-tier survey`
+# against the bucket took 21m53s (1313.0s). Its manifest showed 922.8s of
+# 1294.7s of step time (71%) was checkpoint UPLOAD, not compute:
+#
+#     step                     elapsed     upload    compute
+#     ep_add_splitbeam_angle    332.76     332.61       0.15
+#     remove_noise              387.07     290.58      96.49
+#     combine_raw               210.60     180.08      30.52
+#     compute_sv                115.93     115.88       0.05
+#     read_raw                  174.79       0.00     174.79   (writes to gs:// temp_dir)
+#     apply_mask                 48.28       0.00      48.28
+#
+# So this variant optimizes uploads first, parallelism second:
+#
+#   1. ep_add_splitbeam_angle's checkpoint removed. 332.6s of upload for 0.15s
+#      of compute, and its arrays are re-uploaded inside remove_noise anyway.
+#      Biggest single win, and it changes no data.               (~ -333s)
+#   2. combine_raw's checkpoint removed. Per-file it is a materialize-only
+#      step, so its checkpoint re-uploaded what read_raw had just written.
+#      compute_sv downstream is checkpointed, so re-runs still prune it.
+#                                                                (~ -180s)
+#   3. temp_dir moved to LOCAL disk in survey_recipe_parallel.config.yaml.
+#      read_raw's 174.8s is zarr writes to a gs:// temp_dir, and combine_raw
+#      then reads them back (30.5s). These intermediates are deleted at the end
+#      of the run, so round-tripping them through the bucket is pure cost.
+#      Reverse this if the workstation is genuinely disk-constrained.
+#                                                       (~ -150s, estimated)
+#   4. rechunk_before_noise added before remove_noise. Absent from this repo's
+#      processing_lvl_2.yaml, though _recipe_optimization_plan.md section 6
+#      measured ~40% off remove_noise's compute on HB1603.  (~ -40s, estimated)
+#   5. Per-file map_over through the whole ingest+Sv+masking chain, with the
+#      fan-in after Sv. Under the default sequential executor this is roughly
+#      performance-neutral; it exists so `--executor dask` can overlap the
+#      per-file network I/O that dominates this pipeline.
+#
+# Predicted total: roughly 550-650s versus the 1313.0s baseline. Untested.
+#
+# ON --executor dask: try it, but measure. A whole mapped-chain instance runs
+# as one task, so none of the per-file intermediates cross a task boundary,
+# which is the good case for the Dask backend. The open question is whether the
+# ~2.8 MiB/s uplink measured previously is a hard total cap (in which case
+# concurrency buys nothing) or per-stream (in which case it could be the single
+# largest remaining win). A local-disk HB1603 run was 34% SLOWER under dask,
+# but for reasons that do not apply here -- see _recipe_optimization_plan.md
+# section 8.2, and note its tail steps are mostly absent from this recipe.
+#
+# Run:  aa-recipe run survey_recipe_parallel.yaml --cache-write-tier survey
+
+recipe:
+  name: "processing_levels_pipeline_gcs_parallel"
+  description: "HB1603 GCS pipeline with per-file parallel ingest and upload-minimized checkpoints."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  raw_input_folder:
+    type: path
+    # Content-fingerprint the (remote) folder so the cache key tracks the file set
+    fingerprint_mode: auto
+  cal_input_folder:
+    type: path
+    default: "./calibration_files/HB201607_cal"
+  line_file_path:
+    type: path
+    default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+
+  # Default display window shared by every plotting step in this pipeline
+  # You can override these by hardcoding values for a specific step or sub-recipe
+  min_depth:
+    type: float
+    default: 0
+  max_depth:
+    type: float
+    default: 1800
+  ping_min:
+    type: int
+    default: 0
+  ping_max:
+    type: int
+    default: 515
+  x_axis_units:
+    type: str
+    default: "seconds"
+  y_axis_units:
+    type: str
+    default: "meters"
+
+
+steps:
+
+  - include: sub_recipes/processing_lvl_1_gcs_parallel.yaml
+    input_overrides:
+      raw_input_folder: ${inputs.raw_input_folder}
+      cal_input_folder: ${inputs.cal_input_folder}
+      # Data time range: clear both to process the whole bucket folder.
+      file_time_start: "2016-07-25T20:58"
+      file_time_end: "2016-07-25T21:45"
+      cruise_id: "HB1603"
+      record_author: "<Your Name>"
+      sonar_model: "EK60"
+
+  # Must follow level 1 (parallel) directly: its steps continue the same
+  # per-file mapped chain, and its fan-in reassembles the survey.
+  - include: sub_recipes/processing_lvl_2_parallel.yaml
+    input_overrides:
+      echodata: ${combine_raw.echodata}
+      cal_params: ${extract_cal_params.cal_params}
+      env_params: ${extract_cal_params.env_params}
+      # Fixed transducer depth below the waterline for the whole survey.
+      depth_offset: 6
+      # seafloor mask
+      seafloor_buffer_m: 100
+      # surface mask
+      surface_depth_m: 10.0
+      # parameters for echopype's remove_background_noise:
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+      # Must stay below the window's real ping count (~516 here) or it clamps
+      # to a single chunk and silently does nothing.
+      noise_chunk_ping_time: 100
+
+  # - id: plot_sv_clean
+  #   op: plot_sv_echogram
+  #   regenerate: if-missing
+  #   inputs:
+  #     ds_Sv: ${remove_noise.ds_Sv}
+  #   params:
+  #     min_depth: ${inputs.min_depth}
+  #     max_depth: ${inputs.max_depth}
+  #     ping_min: ${inputs.ping_min}
+  #     ping_max: ${inputs.ping_max}
+  #     x_axis_units: ${inputs.x_axis_units}
+  #     y_axis_units: ${inputs.y_axis_units}
+  #     dpi: 100
+
+  # Unchanged from survey_recipe.yaml: level 3 is survey-wide, and its
+  # checkpoint (compute_mvbs) cost only 3.65s to upload.
+  - include: sub_recipes/processing_lvl_3.yaml
+    input_overrides:
+      sv_clean_unmasked: ${remove_noise.ds_Sv}
+      # MVBS bin size:
+      range_bin: "20m"
+      ping_time_bin: "20s"
+      nan_threshold: 0.6 # mask bin if NAN's exceed this fraction of data in the cell
+
+  # - id: add_line_overlay
+  #   op: add_line_overlay
+  #   inputs:
+  #     ds: ${compute_mvbs.ds_MVBS}
+  #   params:
+  #     line_file_path: ${inputs.line_file_path}
+  #     line_name: "sw_dive_profile"
+
+  # - id: plot_mvbs
+  #   op: plot_sv_echogram
+  #   regenerate: if-missing
+  #   inputs:
+  #     ds_Sv: ${add_line_overlay.ds}
+  #     ds_Sv_source: ${mask_sparse.ds_Sv}
+  #   params:
+  #     min_depth: ${inputs.min_depth}
+  #     max_depth: ${inputs.max_depth}
+  #     ping_min: ${inputs.ping_min}
+  #     ping_max: ${inputs.ping_max}
+  #     x_axis_units: ${inputs.x_axis_units}
+  #     y_axis_units: ${inputs.y_axis_units}
+  #     dpi: 50
+  #     overlay_lines:
+  #       - var: "sw_dive_profile_fit"
+  #         style:
+  #           color: "red"
+  #           linewidth: 3.5
+
+  # - include: sub_recipes/processing_lvl_4.yaml
+  #   input_overrides:
+  #     mvbs_with_lines: ${add_line_overlay.ds}
+  #     echodata: ${combine_raw.echodata}
+  #     overlay_line_var: "sw_dive_profile"
+  #     sv_clean_unmasked: ${remove_noise.ds_Sv}
+  #     cell_stats_sv: ${compute_cell_stats.ds_Sv}
+  #     min_depth: ${inputs.min_depth}
+  #     max_depth: ${inputs.max_depth}
+  #     ping_min: ${inputs.ping_min}
+  #     ping_max: ${inputs.ping_max}
+  #     x_axis_units: ${inputs.x_axis_units}
+  #     y_axis_units: ${inputs.y_axis_units}
