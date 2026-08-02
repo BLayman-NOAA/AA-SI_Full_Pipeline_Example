@@ -120,7 +120,7 @@ steps:
             color: "red"
             linewidth: 3.5
 
-  - include: sub_recipes/processing_lvl_4.yaml
+  - include: sub_recipes/processing_lvl_4_single_pass.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
       echodata: ${combine_raw.echodata}
@@ -133,3 +133,17 @@ steps:
       ping_max: ${inputs.ping_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
+
+  # - include: sub_recipes/processing_lvl_4_multi_pass.yaml
+  #   input_overrides:
+  #     mvbs_with_lines: ${add_line_overlay.ds}
+  #     echodata: ${combine_raw.echodata}
+  #     overlay_line_var: "sw_dive_profile"
+  #     sv_clean_unmasked: ${remove_noise.ds_Sv}
+  #     cell_stats_sv: ${compute_cell_stats.ds_Sv}
+  #     min_depth: ${inputs.min_depth}
+  #     max_depth: ${inputs.max_depth}
+  #     ping_min: ${inputs.ping_min}
+  #     ping_max: ${inputs.ping_max}
+  #     x_axis_units: ${inputs.x_axis_units}
+  #     y_axis_units: ${inputs.y_axis_units}

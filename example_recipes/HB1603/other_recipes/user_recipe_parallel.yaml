@@ -160,15 +160,18 @@ steps:
             color: "red"
             linewidth: 3.5
 
-  # echodata is deliberately NOT wired here, unlike user_recipe.yaml.
-  # combine_raw is a per-file MAPPED step in the parallel pipeline, so
-  # ${combine_raw.echodata} is a LIST of one EchoData per raw file, not the
-  # single survey-wide object add_auxiliary_features expects. The input is
-  # optional and only needed for the 'seafloor_depth' / 'altitude' features;
-  # this configuration uses 'cell_cv', which is served by cell_stats_sv.
-  - include: sub_recipes/processing_lvl_4.yaml
+  # Level 4 uses the _parallel variant because echodata cannot be wired here:
+  # combine_raw is a per-file MAPPED step, so ${combine_raw.echodata} is a LIST
+  # of one EchoData per raw file, not the single survey-wide object
+  # add_auxiliary_features expects. Instead the seafloor line that
+  # detect_seafloor already produced per file is passed straight through --
+  # ~20 KB of data rather than collecting ~1.2 GB of EchoData to reach it.
+  # The reference below resolves to the list of per-file lines and is
+  # concatenated along ping_time downstream; no collect step is required.
+  - include: sub_recipes/processing_lvl_4_parallel.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
+      seafloor_depth: ${detect_seafloor.seafloor_depth}
       overlay_line_var: "sw_dive_profile"
       sv_clean_unmasked: ${remove_noise.ds_Sv}
       cell_stats_sv: ${compute_cell_stats.ds_Sv}

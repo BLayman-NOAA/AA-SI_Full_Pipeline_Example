@@ -126,7 +126,7 @@ steps:
             color: "red"
             linewidth: 3.5
 
-  - include: sub_recipes/processing_lvl_4.yaml
+  - include: sub_recipes/processing_lvl_4_single_pass.yaml
     input_overrides:
       mvbs_with_lines: ${add_line_overlay.ds}
       echodata: ${combine_raw.echodata}
