@@ -1,9 +1,13 @@
 # AA-SI specific
 *.nc
 *.raw
+*.bot
+*.idx
 *.zarr
 *.vtk
 recipe_cache/
+user_cache/
+survey_cache/
 example_recipes/outputs
 exe_temp/
 outputs/
