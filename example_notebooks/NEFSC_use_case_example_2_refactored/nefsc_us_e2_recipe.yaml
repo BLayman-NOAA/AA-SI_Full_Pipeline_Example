@@ -61,8 +61,8 @@ masking:
 # -----------------------------------------------------------------------------
 noise_removal:
   remove_noise:
-    noise_range_sample_num: 10
-    noise_ping_num: 5
+    range_sample_num: 10
+    ping_num: 5
 
 # -----------------------------------------------------------------------------
 # MVBS
