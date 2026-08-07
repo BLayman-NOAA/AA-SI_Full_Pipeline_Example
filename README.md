@@ -39,6 +39,25 @@ poetry install
 poetry run pre-commit install
 ```
 
+### Updating the AA-SI Dependencies
+
+The AA-SI packages are installed from GitHub, and `poetry.lock` pins the exact
+commit each one resolved to. `poetry install` will keep reusing those pinned
+commits, so pulling in newer AA-SI work takes a re-resolve:
+
+```bash
+# Pull this repo and move every AA-SI package to the latest commit
+bash update_aa_deps.sh
+
+# Same, but also wipe poetry.lock, the poetry caches, and the virtualenv first
+bash update_aa_deps.sh --clean
+```
+
+`show_dep_commits.py` prints the commit each installed AA-SI package came from,
+which the script runs at the end. Note that `poetry update` replaces any local
+editable overrides with the GitHub versions, so re-run your `pip install -e`
+commands afterwards if you develop against sibling checkouts.
+
 ### Running the Notebooks
 
 After installation, open any notebook in `example_notebooks/` with JupyterLab or VS Code:
@@ -76,6 +95,8 @@ These notebooks demonstrate the following AA-SI packages working together:
 
 ```
 ├── pyproject.toml              # Dependency management (Poetry)
+├── update_aa_deps.sh           # Reinstall the AA-SI packages at their latest commits
+├── show_dep_commits.py         # Print the commit each installed package came from
 ├── README.md
 ├── CHANGELOG.md
 ├── LICENSE

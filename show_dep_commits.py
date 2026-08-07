@@ -19,4 +19,4 @@ for dist in sorted(im.distributions(), key=lambda d: (d.metadata['Name'] or '').
         print(f"{name:26} dir   {head}  editable={editable}  {path}")
 
 
-# NOTE: if any commits are stale, delete poetry.lock and run poetry cache clear --all before poetry install
+# NOTE: if any commits are stale, run ./update_aa_deps.sh (--clean wipes poetry.lock and the caches first)
