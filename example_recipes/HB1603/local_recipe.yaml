@@ -77,8 +77,8 @@ steps:
       # surface mask
       surface_depth_m: 10.0
       # parameters for echopype's remove_background_noise:
-      range_sample_num: 10
-      ping_num: 5
+      noise_range_sample_num: 10
+      noise_ping_num: 5
 
   - id: plot_sv_clean
     op: plot_sv_echogram
