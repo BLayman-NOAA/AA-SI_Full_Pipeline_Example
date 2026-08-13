@@ -1,11 +1,10 @@
-# HB1603 Acoustic Survey - Processing Levels Pipeline Recipe
+# HB1603 acoustic survey, local processing levels pipeline.
 #
-# Refactored variant of the HB1603 modular recipe that organizes the acoustic
-# processing flow into explicit processing levels 0 through 4. The dataset-
-# specific line overlay and visualization steps are defined directly here in
-# the parent recipe.
+# Runs levels 0 through 4 from local inputs, starting with the NCEI download.
+# The line overlay and plotting steps live here rather than in a sub-recipe
+# because they are specific to this dataset.
 #
-# Usage: aa-recipe generate processing_levels_pipeline.yaml
+# Usage: aa-recipe run local_recipe.yaml
 
 recipe:
   name: "processing_levels_pipeline"
@@ -33,15 +32,15 @@ inputs:
   max_depth:
     type: float
     default: 1800
-  ping_min:
-    type: int
-    default: 0
-  ping_max:
-    type: int
-    default: 515
+  # With no defaults the echograms span the whole time range. Set either to a
+  # UTC timestamp, for example "2016-07-18T09:30", to window them instead.
+  time_min:
+    type: str
+  time_max:
+    type: str
   x_axis_units:
     type: str
-    default: "seconds"
+    default: "datetime"
   y_axis_units:
     type: str
     default: "meters"
@@ -75,7 +74,7 @@ steps:
       # seafloor mask
       seafloor_buffer_m: 100
       # surface mask
-      surface_depth_m: 10.0
+      surface_mask_depth: 10.0
       # parameters for echopype's remove_background_noise:
       noise_range_sample_num: 10
       noise_ping_num: 5
@@ -87,8 +86,8 @@ steps:
     params:
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
 
@@ -116,8 +115,8 @@ steps:
     params:
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       overlay_lines:
@@ -135,7 +134,7 @@ steps:
       cell_stats_sv: ${compute_cell_stats.ds_Sv}
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}

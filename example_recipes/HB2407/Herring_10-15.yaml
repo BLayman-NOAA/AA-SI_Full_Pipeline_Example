@@ -1,8 +1,8 @@
 # NOTE: this hasn't been refactored to combine after calibrating sv yet
 
 recipe:
-  name: "processing_levels_pipeline_gcs"
-  description: "HB2407 processing levels pipeline reading all inputs from a GCS bucket."
+  name: "herring_10_15"
+  description: "HB2407 Herring 10-15 pipeline with a survey-wide combine before Sv computation."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -18,8 +18,8 @@ inputs:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines"
 
-  # Data time range. Selects the raw files to process AND the Echoview seabed
-  # line exports to read, so the line always spans the pings.
+  # Data time range. Selects the raw files to process and the Echoview seabed
+  # line exports to read.
   file_time_start:
     type: str
     default: "2024-10-15T13:38:52"
@@ -35,17 +35,17 @@ inputs:
   max_depth:
     type: float
     default: 50
-  ping_min:
-    type: int
-    default: 0
-  # With no default, ping_max plots every ping. Restore the default below to
-  # window the echograms instead.
-  ping_max:
-    type: int
-    # default: 500
+  # No defaults span the whole time range. Set either to a UTC timestamp, like
+  # the file_time_start/file_time_end above, to window the echograms.
+  time_min:
+    type: str
+    # default: "2024-10-15T00:00"
+  time_max:
+    type: str
+    # default: "2024-10-15T01:00"
   x_axis_units:
     type: str
-    default: "seconds"
+    default: "datetime"
   y_axis_units:
     type: str
     default: "meters"
@@ -68,13 +68,13 @@ steps:
       echodata: ${combine_raw.echodata}
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
-      # Transducer depth is derived per file from the raw file's drop keel offset (e.g. 7.5 m), heave and 
-      # and manually derived datum_correction_m which assumes the recorded offset is waterline referenced.
+      # Transducer depth comes from each file's drop keel offset plus heave.
+      # datum_correction_m assumes that offset is waterline referenced.
       datum_correction_m: -1.0
       use_heave: true
       heave_sign: 1.0
       # surface mask
-      surface_depth_m: 5.0 
+      surface_mask_depth: 5.0 
       seafloor_buffer_m: 1
       # parameters for echopype's remove_background_noise:
       noise_ping_num: 5
@@ -91,8 +91,8 @@ steps:
     params:
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       dpi: 100
@@ -114,8 +114,8 @@ steps:
     params:
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50
@@ -129,7 +129,11 @@ steps:
       cell_stats_sv: ${compute_cell_stats.ds_Sv}
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
+      # HDBSCAN tuning
+      hdbscan_min_cluster_size_fraction: 0.001
+      hdbscan_min_samples: 7
+      hdbscan_cluster_selection_method: "eom"

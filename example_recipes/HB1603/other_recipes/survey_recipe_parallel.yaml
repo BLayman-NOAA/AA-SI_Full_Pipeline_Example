@@ -1,53 +1,24 @@
-# HB1603 Acoustic Survey - Processing Levels Pipeline (GCS Bucket, Parallel)
-# Survey-level Recipe, tuned for a bandwidth-limited gs:// cache.
+# HB1603 survey-level recipe, tuned for a bandwidth-limited gs:// cache.
 #
-# WHAT THIS CHANGES vs survey_recipe.yaml, and why
+# Parallel variant of survey_recipe.yaml. Most of a baseline bucket run was
+# checkpoint upload rather than compute, so this recipe trims uploads first and
+# adds parallelism second:
 #
-# A baseline `aa-recipe run survey_recipe.yaml --cache-write-tier survey`
-# against the bucket took 21m53s (1313.0s). Its manifest showed 922.8s of
-# 1294.7s of step time (71%) was checkpoint UPLOAD, not compute:
+#   1. No checkpoint on ep_add_splitbeam_angle. It was the largest upload in the
+#      run for almost no compute, and its arrays are re-uploaded inside
+#      remove_noise anyway.
+#   2. No checkpoint on combine_raw. Per file it only materializes what read_raw
+#      just wrote, and compute_sv downstream is checkpointed.
+#   3. temp_dir on local disk, set in the config file. Its zarr intermediates
+#      are deleted at the end of the run, so round-tripping them through the
+#      bucket is pure cost. Reverse it if the workstation is disk-constrained.
+#   4. rechunk_before_noise added, which cuts remove_noise's compute.
+#   5. Per-file map_over through ingest, Sv and masking, with the fan-in after
+#      Sv, so --executor dask can overlap the per-file network I/O.
 #
-#     step                     elapsed     upload    compute
-#     ep_add_splitbeam_angle    332.76     332.61       0.15
-#     remove_noise              387.07     290.58      96.49
-#     combine_raw               210.60     180.08      30.52
-#     compute_sv                115.93     115.88       0.05
-#     read_raw                  174.79       0.00     174.79   (writes to gs:// temp_dir)
-#     apply_mask                 48.28       0.00      48.28
-#
-# So this variant optimizes uploads first, parallelism second:
-#
-#   1. ep_add_splitbeam_angle's checkpoint removed. 332.6s of upload for 0.15s
-#      of compute, and its arrays are re-uploaded inside remove_noise anyway.
-#      Biggest single win, and it changes no data.               (~ -333s)
-#   2. combine_raw's checkpoint removed. Per-file it is a materialize-only
-#      step, so its checkpoint re-uploaded what read_raw had just written.
-#      compute_sv downstream is checkpointed, so re-runs still prune it.
-#                                                                (~ -180s)
-#   3. temp_dir moved to LOCAL disk in survey_recipe_parallel.config.yaml.
-#      read_raw's 174.8s is zarr writes to a gs:// temp_dir, and combine_raw
-#      then reads them back (30.5s). These intermediates are deleted at the end
-#      of the run, so round-tripping them through the bucket is pure cost.
-#      Reverse this if the workstation is genuinely disk-constrained.
-#                                                       (~ -150s, estimated)
-#   4. rechunk_before_noise added before remove_noise. Absent from this repo's
-#      processing_lvl_2.yaml, though _recipe_optimization_plan.md section 6
-#      measured ~40% off remove_noise's compute on HB1603.  (~ -40s, estimated)
-#   5. Per-file map_over through the whole ingest+Sv+masking chain, with the
-#      fan-in after Sv. Under the default sequential executor this is roughly
-#      performance-neutral; it exists so `--executor dask` can overlap the
-#      per-file network I/O that dominates this pipeline.
-#
-# Predicted total: roughly 550-650s versus the 1313.0s baseline. Untested.
-#
-# ON --executor dask: try it, but measure. A whole mapped-chain instance runs
-# as one task, so none of the per-file intermediates cross a task boundary,
-# which is the good case for the Dask backend. The open question is whether the
-# ~2.8 MiB/s uplink measured previously is a hard total cap (in which case
-# concurrency buys nothing) or per-stream (in which case it could be the single
-# largest remaining win). A local-disk HB1603 run was 34% SLOWER under dask,
-# but for reasons that do not apply here -- see _recipe_optimization_plan.md
-# section 8.2, and note its tail steps are mostly absent from this recipe.
+# --executor dask is worth trying here but measure it: a whole chain instance
+# runs as one task, so no per-file intermediate crosses a task boundary, but
+# whether concurrency helps depends on whether the uplink caps per stream.
 #
 # Run:  aa-recipe run survey_recipe_parallel.yaml --cache-write-tier survey
 
@@ -78,15 +49,15 @@ inputs:
   max_depth:
     type: float
     default: 1800
-  ping_min:
-    type: int
-    default: 0
-  ping_max:
-    type: int
-    default: 515
+  # With no defaults the echograms span the whole time range. Set either to a
+  # UTC timestamp, for example "2016-07-18T09:30", to window them instead.
+  time_min:
+    type: str
+  time_max:
+    type: str
   x_axis_units:
     type: str
-    default: "seconds"
+    default: "datetime"
   y_axis_units:
     type: str
     default: "meters"
@@ -105,8 +76,7 @@ steps:
       record_author: "<Your Name>"
       sonar_model: "EK60"
 
-  # Must follow level 1 (parallel) directly: its steps continue the same
-  # per-file mapped chain, and its fan-in reassembles the survey.
+  # Must follow level 1 directly: it continues the same mapped chain.
   - include: sub_recipes/processing_lvl_2_parallel.yaml
     input_overrides:
       echodata: ${combine_raw.echodata}
@@ -117,7 +87,7 @@ steps:
       # seafloor mask
       seafloor_buffer_m: 100
       # surface mask
-      surface_depth_m: 10.0
+      surface_mask_depth: 10.0
       # parameters for echopype's remove_background_noise:
       range_sample_num: 10
       ping_num: 5
@@ -133,14 +103,14 @@ steps:
   #   params:
   #     min_depth: ${inputs.min_depth}
   #     max_depth: ${inputs.max_depth}
-  #     ping_min: ${inputs.ping_min}
-  #     ping_max: ${inputs.ping_max}
+  #     time_min: ${inputs.time_min}
+  #     time_max: ${inputs.time_max}
   #     x_axis_units: ${inputs.x_axis_units}
   #     y_axis_units: ${inputs.y_axis_units}
   #     dpi: 100
 
-  # Unchanged from survey_recipe.yaml: level 3 is survey-wide, and its
-  # checkpoint (compute_mvbs) cost only 3.65s to upload.
+  # Unchanged from survey_recipe.yaml: level 3 is survey-wide and its checkpoint
+  # is cheap to upload.
   - include: sub_recipes/processing_lvl_3.yaml
     input_overrides:
       sv_clean_unmasked: ${remove_noise.ds_Sv}
@@ -166,8 +136,8 @@ steps:
   #   params:
   #     min_depth: ${inputs.min_depth}
   #     max_depth: ${inputs.max_depth}
-  #     ping_min: ${inputs.ping_min}
-  #     ping_max: ${inputs.ping_max}
+  #     time_min: ${inputs.time_min}
+  #     time_max: ${inputs.time_max}
   #     x_axis_units: ${inputs.x_axis_units}
   #     y_axis_units: ${inputs.y_axis_units}
   #     dpi: 50
@@ -186,7 +156,7 @@ steps:
   #     cell_stats_sv: ${compute_cell_stats.ds_Sv}
   #     min_depth: ${inputs.min_depth}
   #     max_depth: ${inputs.max_depth}
-  #     ping_min: ${inputs.ping_min}
-  #     ping_max: ${inputs.ping_max}
+  #     time_min: ${inputs.time_min}
+  #     time_max: ${inputs.time_max}
   #     x_axis_units: ${inputs.x_axis_units}
   #     y_axis_units: ${inputs.y_axis_units}

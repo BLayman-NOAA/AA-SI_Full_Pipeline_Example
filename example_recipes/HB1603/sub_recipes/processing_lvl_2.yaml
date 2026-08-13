@@ -1,8 +1,7 @@
-# Processing Level 2 - Sv Computation and Noise Removal
+# Processing level 2: Sv computation and noise removal.
 #
-# Starts from the combined echodata plus extracted calibration parameters,
-# computes Sv, builds and applies the masking stack, and performs background
-# noise removal.
+# From the combined echodata and extracted calibration parameters: computes Sv,
+# builds and applies the masking stack, and removes background noise.
 
 recipe:
   name: "processing_lvl_2"
@@ -33,7 +32,7 @@ inputs:
     description: >
       Metres above the detected seafloor at which the seafloor mask starts
       excluding samples, so the bottom echo and its ringing are dropped.
-  surface_depth_m:
+  surface_mask_depth:
     type: float
     default: 10.0
     description: "Depth in meters above which the surface mask excludes samples."
@@ -116,7 +115,7 @@ steps:
     inputs:
       ds_Sv: ${compute_sv.ds_Sv}
     params:
-      surface_depth_m: ${inputs.surface_depth_m}
+      surface_depth_m: ${inputs.surface_mask_depth}
 
   - id: create_frequency_mask
     op: create_frequency_mask

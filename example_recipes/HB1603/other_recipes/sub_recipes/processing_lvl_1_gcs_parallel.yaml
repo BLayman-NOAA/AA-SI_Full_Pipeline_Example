@@ -1,33 +1,18 @@
-# Processing Level 1 (GCS, Parallel) - Per-File Raw Ingest and Calibration
+# Processing level 1 (GCS, parallel): per-file raw ingest and calibration.
 #
-# GCS-tuned per-file variant of processing_lvl_1_gcs.yaml. Two changes, both
-# aimed at the finding that ~71% of the survey_recipe.yaml GCS run was
-# checkpoint upload, not compute:
+# GCS-tuned per-file variant of processing_lvl_1_gcs.yaml, aimed at the finding
+# that most of a baseline bucket run was checkpoint upload rather than compute.
+# Two changes:
 #
-#   1. combine_raw is NO LONGER CHECKPOINTED. In this per-file shape it is a
-#      materialize-only step (it opens one already-written zarr store), so its
-#      checkpoint was a full re-upload of data read_raw had just written.
-#      Measured cost of that upload in the baseline run: 180.08s of 210.60s.
-#      Nothing is lost on re-run: compute_sv downstream IS checkpointed, so the
-#      backward planner prunes read_raw and combine_raw entirely on a cache hit.
+#   1. combine_raw is no longer checkpointed. Per file it only opens a zarr
+#      store read_raw just wrote, so the checkpoint was a full re-upload.
+#      compute_sv downstream is checkpointed, so a cache hit still prunes both.
+#   2. Each file selects its own calibration parameters via
+#      raw_file_path: ${_item}. mapping_dict is keyed per raw filename, and
+#      without this every file would reuse the first file's channel mapping.
 #
-#   2. Each file selects its OWN calibration parameters, via
-#      raw_file_path: ${_item}. mapping_dict is keyed per raw filename;
-#      without this, every file silently reuses the first file's channel
-#      mapping. gen_cal_mapping still runs once for the survey, so the
-#      calibration files are parsed once, not once per raw file.
-#
-# The per-file fan-out also lets `--executor dask` overlap the per-file network
-# I/O, which is where this pipeline's time actually goes. See
-# survey_recipe_parallel.yaml's header for whether that is worth trying.
-#
-# Parallel shape:
-#
-#   initial_setup
-#     |-- gen_cal_mapping (once, survey-wide) ----+
-#     +-- read_raw          (per file)            |
-#           combine_raw     (per file) -----------+
-#           extract_cal_params (per file, picks this file's mapping)
+# The per-file fan-out also lets --executor dask overlap the network I/O that
+# dominates this pipeline.
 
 recipe:
   name: "processing_lvl_1_gcs_parallel"
@@ -78,10 +63,9 @@ inputs:
     type: int
     default: 1000
     description: >
-      Chunk length along ping_time for each file's EchoData. Because
-      combine_raw is no longer checkpointed here, this no longer drives a
-      gs:// write; it only sets in-memory chunking for the per-file Sv
-      computation downstream.
+      Chunk length along ping_time for each file's EchoData. Since combine_raw
+      is not checkpointed here, this only sets in-memory chunking for the
+      per-file Sv computation downstream.
 
 steps:
 
@@ -95,9 +79,9 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # Runs once for the whole survey. Builds calibration_dict and mapping_dict,
-  # the latter keyed per raw filename; the per-file extract_cal_params
-  # instances below only index into these, they do not re-parse anything.
+  # Runs once for the whole survey, so the calibration files are parsed once.
+  # mapping_dict is keyed per raw filename, and each extract_cal_params instance
+  # below picks its own file's entry out of it.
   - id: gen_cal_mapping
     op: generate_standardized_cal_mapping
     params:
@@ -112,20 +96,15 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # --- Per-file fan-out starts here --------------------------------------
-  # Every step from here through the end of processing_lvl_2_parallel.yaml
-  # shares this map_over source, forming ONE mapped chain. A whole chain
-  # instance runs as a single task, so none of these intermediate values ever
-  # crosses a task boundary -- which is what keeps the per-file shape cheap
-  # under a concurrent executor.
+  # Per-file fan-out starts here. Every step from here through the end of
+  # processing_lvl_2_parallel.yaml shares this map_over source, so a whole chain
+  # instance runs as one task and no intermediate crosses a task boundary.
   #
-  # checkpoint: never -- the output is a temp_dir store path deleted at the end
-  # of the run, so caching it would leave a dangling path on the next run.
+  # checkpoint: never, because the output is a temp_dir store path that is
+  # deleted at the end of the run and would dangle if cached.
   #
-  # NOTE: no `dask_config: scheduler: processes` here, unlike the recipe_manager
-  # copy of this file. This work is network-bound rather than GIL-bound, and on
-  # Windows the process pool pays a large fixed spawn + echopype re-import cost
-  # per instance. Threads are the right default here.
+  # No dask_config scheduler override: this work is network-bound rather than
+  # GIL-bound, and a process pool would pay a large spawn cost per instance.
   - id: read_raw
     op: read_raw_files
     map_over: ${initial_setup.raw_file_paths}
@@ -138,9 +117,9 @@ steps:
       include_bot: true
       intermediate_format: "zarr"
 
-  # Materializes THIS file's store as an EchoData object. Not a survey-wide
-  # fan-in: combine_raw_files accepts a single-file list and simply opens it.
-  # Deliberately NOT checkpointed -- see this file's header, item 1.
+  # Materializes this file's store as an EchoData object. Not a fan-in:
+  # combine_raw_files takes a single-file list and simply opens it. Not
+  # checkpointed, see item 1 in the header.
   - id: combine_raw
     op: combine_raw_files
     map_over: ${initial_setup.raw_file_paths}

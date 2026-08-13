@@ -1,7 +1,7 @@
-# Processing Level 3 - Sparse Masking, MVBS, and Per-Cell Statistics
+# Processing level 3: sparse masking, MVBS, and per-cell statistics.
 #
-# Applies sparse-bin masking to the clean Sv dataset, computes MVBS, and also
-# computes per-cell statistics from the pre-sparse-mask Sv dataset for ML use.
+# Masks sparse bins in the clean Sv dataset and computes MVBS from the result.
+# Per-cell statistics come from the pre-mask Sv dataset, for ML use.
 
 recipe:
   name: "processing_lvl_3"

@@ -1,8 +1,8 @@
-# Processing Level 1 - Raw Ingest and Calibration Extraction
+# Processing level 1: raw ingest and calibration extraction.
 #
-# Takes a folder of raw files and standardized calibration files, builds the
-# calibration mapping, reads the raw files, combines them, and extracts the
-# calibration/environment parameters needed for Sv computation.
+# From a folder of raw files and standardized calibration files: builds the
+# calibration mapping, reads and combines the raw files, and extracts the
+# calibration and environment parameters Sv computation needs.
 
 recipe:
   name: "processing_lvl_1"
@@ -36,9 +36,9 @@ inputs:
     default: []
     description: >
       Optional subset of filenames within raw_input_folder to use. Empty list
-      means "use every .raw file in the folder". Note that
-      generate_standardized_cal_mapping always scans the full folder; this
-      input only constrains the set of files that get opened and processed.
+      means "use every .raw file in the folder". Only constrains which files are
+      opened and processed; generate_standardized_cal_mapping still scans the
+      full folder.
 
 steps:
 

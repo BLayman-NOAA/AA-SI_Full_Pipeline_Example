@@ -1,8 +1,7 @@
-# Processing Level 2 - Sv Computation and Noise Removal
+# Processing level 2: Sv computation and noise removal.
 #
-# Starts from the combined echodata plus extracted calibration parameters,
-# computes Sv, builds and applies the masking stack, and performs background
-# noise removal.
+# From the combined echodata and extracted calibration parameters: computes Sv,
+# builds and applies the masking stack, and removes background noise.
 
 recipe:
   name: "processing_lvl_2"
@@ -65,7 +64,7 @@ inputs:
       across. Consecutive line files butt up against each other to within a
       second, so this only bites across a survey-leg gap, where interpolating
       would otherwise draw a straight seafloor over days of missing line.
-  surface_depth_m:
+  surface_mask_depth:
     type: float
     default: 10.0
     description: "Depth in meters above which the surface mask excludes samples." 
@@ -106,9 +105,9 @@ steps:
       waveform_mode: "CW" 
       encode_mode: "power"
 
-  # Transducer depth comes from the file's own drop keel offset plus per-ping
-  # heave. Checkpointed because it is tiny and is the record of what vertical
-  # reference the run used, so it can be inspected without recomputing Sv.
+  # Transducer depth from the file's own drop keel offset plus per-ping heave.
+  # Checkpointed because it is tiny and records the vertical reference the run
+  # used, so it can be inspected without recomputing Sv.
   - id: compute_transducer_depth
     op: compute_transducer_depth
     checkpoint: always
@@ -156,14 +155,11 @@ steps:
       ds_Sv: ${ep_add_depth.ds_Sv}
     params:
       evl_path: ${inputs.seabed_line_folder}
-      # Same window that selects the raw files, so the line always spans the
-      # pings. A line file's span runs from its own name stamp to the next
-      # file's, which is what pulls in the export straddling the window start.
+      # Same window that selects the raw files, so the line spans the pings.
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
-      # No extrapolation past the line's ends: pings outside it come back NaN
-      # and create_seafloor_mask drops them entirely, so min_coverage below
-      # fails the run rather than letting that happen quietly.
+      # No extrapolation past the line's ends. Uncovered pings come back NaN and
+      # create_seafloor_mask drops them, so min_coverage fails the run instead.
       edge_extend_s: 0.0
       max_gap_s: ${inputs.seabed_line_max_gap_s}
       min_coverage: 0.99
@@ -174,8 +170,6 @@ steps:
       ds_Sv: ${ep_add_splitbeam_angle.ds_Sv}
       seafloor_depth: ${detect_seafloor.seafloor_depth}
     params:
-      # The seabed sits at 55-71 m in this line; a buffer anywhere near that
-      # depth keeps nothing at all.
       seafloor_buffer_m: ${inputs.seafloor_buffer_m}
 
   - id: create_surface_mask
@@ -183,7 +177,7 @@ steps:
     inputs:
       ds_Sv: ${compute_sv.ds_Sv}
     params:
-      surface_depth_m: ${inputs.surface_depth_m}
+      surface_depth_m: ${inputs.surface_mask_depth}
 
   - id: combine_masks
     op: combine_masks

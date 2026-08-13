@@ -1,40 +1,26 @@
 
-# Config for user_recipe_parallel.yaml.
+# Config for local_recipe.yaml, picked up automatically by
+# `aa-recipe run local_recipe.yaml`. Everything is local here, no bucket.
 #
-# Auto-discovered locations (first found wins; only one file is loaded):
-#   1. --config <path>                        (explicit flag)
-#   2. $AA_RECIPE_CONFIG                      (explicit path via env var)
-#   3. <recipe_dir>/<recipe_stem>.config.yaml (PER-RECIPE — this file, picked
-#      up automatically by `aa-recipe run user_recipe_parallel.yaml`)
-#   4. ./aa-recipe.config.yaml                (generic shared defaults, cwd)
+# Config discovery, first found wins:
+#   1. --config <path>
+#   2. $AA_RECIPE_CONFIG
+#   3. <recipe_dir>/<recipe_stem>.config.yaml, this file
+#   4. ./aa-recipe.config.yaml
 #   5. ~/.config/aa-recipe/config.yaml
 #
-# CLI flags override these values; these values override the recipe's own
+# CLI flags override these values, which in turn override the recipe's own
 # input defaults.
 
-# Checkpoint cache stays in the bucket: these are the durable, shareable
-# artifacts and the whole point of the survey tier.
 user_cache_dir: ./user_cache
 
-# temp_dir is LOCAL here, and that is the deliberate difference from
-# survey_recipe.config.yaml.
-#
 # temp_dir holds the per-file zarr intermediates that read_raw writes and
-# combine_raw immediately reads back, and which are deleted at the end of the
-# run. Pointing it at the bucket cost 174.8s writing plus 30.5s reading in the
-# baseline run, for data that never outlives the run. Nothing durable is lost
-# by keeping it local.
-#
-# REVERSE THIS (back to gs://.../exe_temp) if the workstation is genuinely
-# disk-constrained. Peak local usage is roughly one raw file plus its zarr
-# store at a time under the sequential executor, multiplied by the concurrency
-# if you run with --executor dask. Note also that since the 2026-07-31
-# _stage_parent_dir() fix, remote checkpoint writes stage through temp_dir
-# before uploading, so this volume also needs room for remove_noise's staged
-# store (~6.6 GB uncompressed for a full window).
+# combine_raw reads straight back, all deleted at the end of the run. Remote
+# checkpoint writes also stage through here before uploading, so leave room for
+# the largest staged store.
 temp_dir: ./exe_temp
 
-# outputs_dir must stay LOCAL for now: calibration artifacts and images are
+# outputs_dir must stay local for now: calibration artifacts and images are
 # written through pathlib and cannot target object storage yet.
 outputs_dir: ./outputs
 

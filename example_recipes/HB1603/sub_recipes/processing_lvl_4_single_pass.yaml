@@ -1,11 +1,11 @@
-# Processing Level 4 - Machine Learning
+# Processing level 4 (single pass): machine learning.
 #
 # Reshapes MVBS for ML, adds auxiliary features, normalizes the ML dataset,
-# runs HDBSCAN clustering, and produces the clustering report outputs.
+# runs HDBSCAN clustering, and writes the clustering report.
 
 recipe:
-  name: "processing_lvl_4"
-  description: "ML reshape, normalization, clustering, and reporting."
+  name: "processing_lvl_4_single_pass"
+  description: "ML reshape, normalization, single-pass clustering, and reporting."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -37,17 +37,19 @@ inputs:
     type: float
     default: 1800
     description: "Deepest depth in meters shown by the ML and clustering echograms."
-  ping_min:
-    type: int
-    default: 0
-    description: "First ping index shown by the ML and clustering echograms."
-  ping_max:
-    type: int
-    default: 515
-    description: "Last ping index shown by the ML and clustering echograms."
+  time_min:
+    type: str
+    description: >
+      Start of the window shown by the ML and clustering echograms, as a UTC
+      timestamp. Omit to start at the first ping.
+  time_max:
+    type: str
+    description: >
+      End of the window shown by the ML and clustering echograms, as a UTC
+      timestamp. Omit to run through the last ping.
   x_axis_units:
     type: str
-    default: "seconds"
+    default: "datetime"
     description: "Units for the x-axis of the ML and clustering echograms."
   y_axis_units:
     type: str
@@ -99,8 +101,8 @@ steps:
       normalization_name: "norm_flat_clr"
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50
@@ -140,12 +142,13 @@ steps:
     params:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
-      # [min_depth, max_depth, ping_min, ping_max]
+      # [min_depth, max_depth]. time_min and time_max below window the plot
+      # horizontally, so the ping slots are left off.
       plot_window:
         - ${inputs.min_depth}
         - ${inputs.max_depth}
-        - ${inputs.ping_min}
-        - ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50

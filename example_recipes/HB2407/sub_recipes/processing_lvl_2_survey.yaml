@@ -1,44 +1,30 @@
-# Processing Level 2a (Survey) - Per-File Sv and Depth, then the Survey Fan-In
+# Processing level 2a (survey): per-file Sv and depth, then the survey fan-in.
 #
 # The survey half of level 2, and the boundary of the shared artifact. It runs
 # once per cruise; every user recipe includes it verbatim, hits the cache, and
 # picks up from merge_survey_sv.
 #
 #   [per file] compute_sv -> compute_transducer_depth -> ep_add_depth
-#              -> crop_range (fixed ceiling, so every file ends the same length)
-#   [fan-in]   merge_survey_sv (collect, concat along ping_time)
-#   [survey]   rechunk_survey_sv -> the shared, chunked Sv store
+#              -> crop_range
+#   [fan-in]   merge_survey_sv, concat along ping_time
+#   [survey]   rechunk_survey_sv, the shared chunked Sv store
 #
-# WHY THE MERGE SITS AFTER ep_add_depth
+# The merge sits after ep_add_depth because everything above it is a property of
+# the raw data and its calibration, not something an analyst varies, and because
+# the depth steps need this file's EchoData. Seabed detection, masking, noise
+# removal and MVBS live in processing_lvl_2_user.yaml and below.
 #
-#   Everything up to here is a property of the raw data and its calibration:
-#   Sv, the vertical reference, and the range axis. Nothing above this line is
-#   something a user would reasonably want to vary per analysis. Seabed
-#   detection, masking, noise removal and MVBS all are, so they live in
-#   processing_lvl_2_user.yaml and below.
+# The crop runs per file with a fixed ceiling. Concatenating along ping_time
+# needs every segment to share a range_sample length, and the data-driven crop
+# modes would each pick a different depth per file, leaving merge_datasets to
+# NaN-pad the difference into echo_range.
 #
-#   compute_transducer_depth and ep_add_depth also need this file's EchoData,
-#   so they cannot move past the merge without reintroducing a survey-wide
-#   combine_raw. The merge is the last point where per-file EchoData is still
-#   in hand.
-#
-# WHY THE CROP IS PER FILE AND USES A FIXED CEILING
-#
-#   Concatenating along ping_time needs every segment to share a range_sample
-#   length. HB2407's files do not: they run 2783, 2795, 2799 and 2806 samples,
-#   and merge_datasets resolves that by outer-joining to the longest and
-#   NaN-padding the rest -- which leaves NaN in echo_range, where downstream
-#   range binning reads it. Their sample interval IS uniform (0.18804 m), so a
-#   fixed crop_max_range_m puts every file on the same length and removes the
-#   padding. The data-driven crop modes cannot be used here: they would each
-#   pick a different depth per file.
-#
-# ep_add_splitbeam_angle is omitted: HB2407's calibration mapping supplies no
-# angle_sensitivity, so echopype's add_splitbeam_angle divides by an all-None
-# array and raises TypeError. Nothing downstream consumes split-beam angles.
+# ep_add_splitbeam_angle is omitted: HB2407's calibration mapping carries no
+# angle_sensitivity, so echopype raises TypeError, and nothing downstream uses
+# split-beam angles.
 #
 # Must be included immediately after processing_lvl_1_survey.yaml: its steps
-# continue that file's mapped chain over ${initial_setup.raw_file_paths}.
+# continue that file's mapped chain.
 
 recipe:
   name: "processing_lvl_2_survey"
@@ -96,7 +82,7 @@ inputs:
 
 steps:
 
-  # --- Per-file chain (continues the map_over from level 1) ---------------
+  # Per-file chain, continuing the map_over from level 1.
 
   - id: compute_sv
     op: compute_sv
@@ -130,8 +116,7 @@ steps:
     params:
       depth_offset: ${compute_transducer_depth.transducer_depth}
 
-  # Fixed ceiling only. See the header for why the data-driven modes cannot be
-  # used per file.
+  # Fixed ceiling only, see the header.
   - id: crop_survey_range
     op: crop_range
     map_over: ${initial_setup.raw_file_paths}
@@ -141,7 +126,7 @@ steps:
       max_range_m: ${inputs.crop_max_range_m}
       drop_trailing_all_nan: false
 
-  # --- Fan-in: the shared survey artifact --------------------------------
+  # Fan-in: the shared survey artifact.
 
   - id: merge_survey_sv
     op: merge_datasets
@@ -151,10 +136,9 @@ steps:
     params:
       dim: "ping_time"
 
-  # Chunked along ping_time and checkpointed: this is the store users read.
-  # The checkpoint write streams chunk by chunk, so building it does not need
-  # the survey in memory -- the memory-hungry steps (sparse masking, MVBS,
-  # per-cell statistics) all live downstream of the user's window.
+  # Chunked along ping_time and checkpointed: this is the store users read. The
+  # write streams chunk by chunk, so building it does not need the survey in
+  # memory.
   - id: rechunk_survey_sv
     op: rechunk_dataset
     checkpoint: always

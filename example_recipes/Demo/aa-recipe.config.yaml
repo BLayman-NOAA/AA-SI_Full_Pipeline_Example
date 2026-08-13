@@ -20,8 +20,10 @@
 # user_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/user_cache/HB2407/recipe_cache
 # temp_dir:   gs://ggn-nmfs-aa-dev-1-data/Test_Layman/user_cache/HB2407/exe_temp
 
-user_cache_dir: ./recipe_cache
+user_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Jech_Test/HB2407/recipe_1/user_cache
 temp_dir: ./exe_temp
+# temp_dir:   gs://ggn-nmfs-aa-dev-1-data/Jech_Test/HB2407/recipe_1/exe_temp
+
 
 # outputs_dir must stay local for now: calibration artifacts and images are
 # written through pathlib and cannot target object storage yet.
@@ -30,7 +32,8 @@ outputs_dir: ./outputs
 # Shared (curated) survey cache tier.
 
 # survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/Survey/survey_cache
-survey_cache_dir: ./survey_cache
+# survey_cache_dir: ./survey_cache
+survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Jech_Test/HB2407/recipe_1/survey_cache
 
 
 # Optional: per-user defaults for recipe inputs

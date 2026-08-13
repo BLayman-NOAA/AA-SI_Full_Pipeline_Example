@@ -1,16 +1,13 @@
-# Processing Level 1 (GCS) - Raw Ingest and Calibration Extraction
+# Processing level 1 (GCS): raw ingest and calibration extraction.
 #
-# GCS-bucket variant of processing_lvl_1.yaml for the "data already in a bucket"
-# use case (no NCEI download). raw_input_folder / cal_input_folder may be gs://
-# URLs; raw files are downloaded one at a time to local scratch, converted to
-# zarr intermediates (written to --temp-dir, which may itself be a bucket), and
-# the local copy deleted before the next file.
+# Variant of processing_lvl_1.yaml for data already in a bucket, with no NCEI
+# download. Raw files come down one at a time, are converted to zarr
+# intermediates under --temp-dir, and the local copy is deleted before the next.
 #
-# Unlike the NCEI-download pipeline, there is no query stage to restrict the file
-# set by time, so this variant wires the optional file_time_start / file_time_end
-# window through to initial_setup and generate_standardized_cal_mapping. The
-# filter is name-based (D{YYYYMMDD}-T{HHMMSS}), so out-of-window remote files are
-# never downloaded.
+# With no query stage to restrict the file set by time, the optional
+# file_time_start / file_time_end window is wired through to initial_setup and
+# generate_standardized_cal_mapping instead. The filter reads the timestamp in
+# the filename, so out-of-window files are never downloaded.
 
 recipe:
   name: "processing_lvl_1_gcs"

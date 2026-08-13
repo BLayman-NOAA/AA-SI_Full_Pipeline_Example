@@ -1,7 +1,6 @@
-# Processing Level 0 - Data Retrieval
+# Processing level 0: data retrieval.
 #
-# Dataset retrieval stage. Queries NCEI and downloads the matching raw files
-# into the requested output directory.
+# Queries NCEI and downloads the matching raw files into the output directory.
 
 recipe:
   name: "processing_lvl_0"

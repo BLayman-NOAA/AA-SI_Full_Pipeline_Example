@@ -1,29 +1,14 @@
-# Processing Level 1 (Survey) - Raw Ingest and Per-File Calibration
+# Processing level 1 (survey): raw ingest and per-file calibration.
 #
-# Same steps as processing_lvl_1_per_file.yaml, with one difference that is the
-# whole point of the survey/user split: the time window here is a SURVEY-WIDE
-# constant, defaulted in this file, not the window a user asks for.
+# Same steps as processing_lvl_1_per_file.yaml, except that the time window here
+# is a survey-wide constant, not the window a user asks for. That is the point
+# of the survey/user split: initial_setup and gen_cal_mapping take the window as
+# a param, so a user window wired in here would re-key every hash below it and
+# no two analysts would share cached work.
 #
-# WHY THAT MATTERS
-#
-#   Step hashes are a Merkle chain -- each step folds in its parents' hashes.
-#   initial_setup and gen_cal_mapping take file_time_start / file_time_end as
-#   params, so a user's window wired in here changes their hashes and every
-#   hash below them. Two users asking for different segments would then share
-#   no cached work at all, even for byte-identical per-file processing of the
-#   same raw files. Verified: changing only the window changed initial_setup,
-#   read_raw, combine_raw, compute_sv and ep_add_depth hashes.
-#
-#   Leaving the window fixed here means every user recipe that includes this
-#   file with the same overrides computes the same hashes, hits the shared
-#   survey cache, and narrows to its own segment later via
-#   select_ping_time_range in processing_lvl_2_user.yaml.
-#
-# So: do not wire ${inputs.file_time_start} into this include from a user
-# recipe. Override survey_time_start / survey_time_end only when the survey
-# itself changes.
-#
-# Included by survey_preprocess.yaml and by every user recipe built on it.
+# Do not wire ${inputs.file_time_start} into this include from a user recipe.
+# Override survey_time_start / survey_time_end only when the survey changes; a
+# user narrows to its own segment later via processing_lvl_2_user.yaml.
 
 recipe:
   name: "processing_lvl_1_survey"
@@ -107,13 +92,12 @@ steps:
       file_time_start: ${inputs.survey_time_start}
       file_time_end: ${inputs.survey_time_end}
 
-  # --- Per-file fan-out starts here --------------------------------------
-  # One mapped instance per raw file in the survey, each checkpointed under its
-  # own content-addressed instance hash. Adding a file to the survey later runs
-  # the chain for that file only.
+  # Per-file fan-out starts here. One instance per raw file, each checkpointed
+  # under its own content-addressed hash, so adding a file to the survey later
+  # runs the chain for that file only.
 
-  # checkpoint: never -- the output is an exe_temp store path deleted at the end
-  # of the run, so it must not be cached under any checkpoint mode.
+  # checkpoint: never, because the output is an exe_temp store path that is
+  # deleted at the end of the run and would dangle if cached.
   - id: read_raw
     op: read_raw_files
     map_over: ${initial_setup.raw_file_paths}

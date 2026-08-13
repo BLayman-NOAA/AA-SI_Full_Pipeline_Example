@@ -1,28 +1,19 @@
-# Processing Level 2b (User) - Window Selection, Masking and Noise Removal
+# Processing level 2b (user): window selection, masking and noise removal.
 #
-# The user half of level 2. It starts from the shared survey Sv store that
+# The user half of level 2. Starts from the shared survey Sv store that
 # processing_lvl_2_survey.yaml produced, narrows to this user's segment, and
-# then does everything a user would reasonably want to vary: seabed line,
-# masking, and background noise removal.
+# then does everything an analyst varies: seabed line, masking, noise removal.
 #
-#   select_window -> detect_seafloor (EVL line) -> seafloor/surface masks
+#   select_window -> detect_seafloor -> seafloor/surface masks
 #                 -> combine -> apply_mask -> rechunk -> remove_noise
 #
-# select_window is the first step here for a reason. Step hashes are a Merkle
-# chain, so every step below the window is re-keyed per window (correct -- they
-# genuinely operate on different data), while everything above it, in levels 1
-# and 2a, keeps one hash across all users and stays a cache hit.
+# select_window comes first so that only the steps below it are re-keyed per
+# window. Levels 1 and 2a keep one hash across all users and stay cache hits.
 #
-# There is no map_over in this file. The per-file fan-out ended at the survey
-# merge, so these steps run once on the windowed dataset. That also means the
-# seabed line's coverage check is back to a whole-window fraction rather than a
-# per-file one, so the default min_coverage behaves as it reads.
-#
-# All of this is lazy until remove_noise forces it: the survey checkpoint loads
-# zarr-backed, and select_window narrows the dask graph to the chunks the
-# window touches. On a 39570-ping store chunked at 3305, a 4001-ping window
-# read 4 of 24 partitions in 1.5 s and 1.4 GB, against 16.5 s and 8.9 GB for
-# the whole array.
+# There is no map_over here: the per-file fan-out ended at the survey merge, so
+# these steps run once on the windowed dataset. Everything stays lazy until
+# remove_noise forces it, and select_window narrows the dask graph to the chunks
+# the window actually touches.
 
 recipe:
   name: "processing_lvl_2_user"
@@ -66,7 +57,7 @@ inputs:
       Fraction of the window's pings that must land on the line before the step
       fails, rather than letting create_seafloor_mask drop every sample of an
       uncovered ping.
-  surface_depth_m:
+  surface_mask_depth:
     type: float
     default: 10.0
     description: "Depth in meters above which the surface mask excludes samples."
@@ -92,8 +83,7 @@ inputs:
 
 steps:
 
-  # The user's entry point into the shared survey store. Everything above this
-  # step is survey-level and shared; everything below is this user's.
+  # The user's entry point into the shared survey store.
   - id: select_window
     op: select_ping_time_range
     checkpoint: always
@@ -110,22 +100,18 @@ steps:
       ds_Sv: ${select_window.ds_Sv}
     params:
       evl_path: ${inputs.seabed_line_folder}
-      # The same window that selected the pings, so the line spans them. A line
-      # file's span runs from its own name stamp to the next file's, which is
-      # what pulls in the export straddling the window start.
+      # The same window that selected the pings, so the line spans them.
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
-      # No extrapolation past the line's ends: uncovered pings come back NaN
-      # and create_seafloor_mask drops them entirely, so min_coverage fails the
-      # run rather than letting that happen quietly.
+      # No extrapolation past the line's ends. Uncovered pings come back NaN and
+      # create_seafloor_mask drops them, so min_coverage fails the run instead.
       edge_extend_s: 0.0
       max_gap_s: ${inputs.seabed_line_max_gap_s}
       min_coverage: ${inputs.seabed_line_min_coverage}
 
-  # ds_Sv must carry 'depth' to match the surface-referenced line
-  # detect_seafloor produced; without it create_seafloor_mask silently falls
-  # back to 'echo_range' and offsets the mask by the transducer depth. The
-  # survey store has been through ep_add_depth, so select_window's output does.
+  # ds_Sv must carry 'depth' to match the surface-referenced line, or the mask
+  # falls back to 'echo_range' and comes out offset by the transducer depth.
+  # The survey store has been through ep_add_depth, so it does.
   - id: create_seafloor_mask
     op: create_seafloor_mask
     inputs:
@@ -140,7 +126,7 @@ steps:
     inputs:
       ds_Sv: ${select_window.ds_Sv}
     params:
-      surface_depth_m: ${inputs.surface_depth_m}
+      surface_depth_m: ${inputs.surface_mask_depth}
 
   - id: combine_masks
     op: combine_masks

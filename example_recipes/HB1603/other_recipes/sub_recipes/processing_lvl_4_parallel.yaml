@@ -1,30 +1,17 @@
-# Processing Level 4 (Parallel) - Machine Learning
+# Processing level 4 (parallel): machine learning.
 #
 # Reshapes MVBS for ML, adds auxiliary features, normalizes the ML dataset,
-# runs HDBSCAN clustering, and produces the clustering report outputs.
+# runs HDBSCAN clustering, and writes the clustering report.
 #
 # Identical to processing_lvl_4.yaml except for how the seafloor line reaches
-# add_aux_features. In a per-file map_over pipeline there is no survey-wide
-# EchoData to read detected_seafloor_depth from -- combine_raw is mapped, so
-# ${combine_raw.echodata} is a LIST of one EchoData per raw file. Rather than
-# collecting ~1.2 GB of EchoData back together to reach ~20 KB of seafloor
-# data, this variant feeds add_aux_features the line that detect_seafloor
-# already produced per file.
+# add_aux_features. A per-file pipeline has no survey-wide EchoData to read it
+# from, so this variant feeds in the line detect_seafloor already produced
+# rather than collecting gigabytes of EchoData to reach a few KB of seafloor.
 #
-# Two consequences worth knowing:
-#
-#   * The ML seafloor is now the line detect_seafloor CHOSE (best channel, or
-#     whichever method the recipe uses), not a mean across all channels as
-#     add_auxiliary_features computes internally from raw EchoData. It is also
-#     the same line create_seafloor_mask masked with, so masking and ML agree.
-#
-#   * VERTICAL REFERENCE: no action needed. 'altitude' is a difference
-#     (seafloor minus sample), so a constant offset shared by both terms
-#     cancels and the frame does not matter as long as they agree. They do:
-#     detect_seafloor promotes its line to surface-referenced only when its
-#     ds_Sv carries depth, the same condition under which depth reaches the ML
-#     dataset, and add_auxiliary_features prefers depth over echo_range to
-#     pair with it. 'seafloor_depth' as a feature is unaffected either way.
+# The ML seafloor is then the line detect_seafloor chose rather than a channel
+# mean computed internally, and it is the same line create_seafloor_mask used,
+# so masking and ML agree. Vertical reference needs no attention: 'altitude' is
+# a difference, so a constant offset shared by both terms cancels.
 
 recipe:
   name: "processing_lvl_4_parallel"
@@ -41,11 +28,12 @@ inputs:
     type: dataarray
     required: false
     description: >
-      Pre-detected seafloor line for the 'seafloor_depth' / 'altitude'
-      features. Wire straight from the mapped detect_seafloor step
-      (${detect_seafloor.seafloor_depth}); the reference resolves to the list
-      of per-file lines, which add_auxiliary_features concatenates along
-      ping_time in segment order. No collect step is needed.
+      Pre-detected seafloor line for the 'seafloor_depth' and 'altitude'
+      features. Wire a survey-wide line collected from the mapped
+      detect_seafloor step, such as a merge_datasets step with
+      collect: ${detect_seafloor.seafloor_depth}. Referencing the mapped step
+      directly resolves on a cold run but fails on a resumed one, because the
+      runner prunes a mapped chain as a whole once its fan-in is a cache hit.
   overlay_line_var:
     type: str
     default: "overlay_line"
@@ -66,17 +54,19 @@ inputs:
     type: float
     default: 1800
     description: "Deepest depth in meters shown by the ML and clustering echograms."
-  ping_min:
-    type: int
-    default: 0
-    description: "First ping index shown by the ML and clustering echograms."
-  ping_max:
-    type: int
-    default: 515
-    description: "Last ping index shown by the ML and clustering echograms."
+  time_min:
+    type: str
+    description: >
+      Start of the window shown by the ML and clustering echograms, as a UTC
+      timestamp. Omit to start at the first ping.
+  time_max:
+    type: str
+    description: >
+      End of the window shown by the ML and clustering echograms, as a UTC
+      timestamp. Omit to run through the last ping.
   x_axis_units:
     type: str
-    default: "seconds"
+    default: "datetime"
     description: "Units for the x-axis of the ML and clustering echograms."
   y_axis_units:
     type: str
@@ -95,10 +85,9 @@ steps:
       feature_strategy: "mean_centered"
       baseline_channel: 0
 
-  # echodata is deliberately absent: it is a per-file list in this pipeline,
-  # and seafloor_depth supplies the only thing it was needed for. Add
-  # 'seafloor_depth' to features below to use it (see this file's header for
-  # the 'altitude' caveat).
+  # echodata is left out: it is a per-file list in this pipeline, and
+  # seafloor_depth supplies the only thing it was needed for. Add
+  # 'seafloor_depth' to features below to use it.
   - id: add_aux_features
     op: add_auxiliary_features
     inputs:
@@ -132,8 +121,8 @@ steps:
       normalization_name: "norm_flat_clr"
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      ping_min: ${inputs.ping_min}
-      ping_max: ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50
@@ -173,12 +162,13 @@ steps:
     params:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
-      # [min_depth, max_depth, ping_min, ping_max]
+      # [min_depth, max_depth]. time_min and time_max below window the plot
+      # horizontally, so the ping slots are left off.
       plot_window:
         - ${inputs.min_depth}
         - ${inputs.max_depth}
-        - ${inputs.ping_min}
-        - ${inputs.ping_max}
+      time_min: ${inputs.time_min}
+      time_max: ${inputs.time_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50

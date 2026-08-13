@@ -1,16 +1,16 @@
-# HB2407 Herring 10-15, per-raw-file pipeline.
+# HB2407 Herring 11-06, per-raw-file pipeline with two-pass Sv-filtered clustering.
 #
-# Per-file variant of Herring_10-15.yaml. Each raw file is read, calibrated,
-# Sv-computed and masked on its own, and merge_sv reassembles the survey before
-# background noise removal. Levels 3 and 4 are survey-wide.
+# Each raw file is read, calibrated, Sv-computed and masked on its own, and
+# merge_sv reassembles the survey before background noise removal. Levels 3 and
+# 4 are survey-wide.
 #
 # Usage:
-#   aa-recipe run Herring_10-15_per_file.yaml
-#   aa-recipe run Herring_10-15_per_file.yaml --executor dask
+#   aa-recipe run Herring_11-06_per_file_sv_filter.yaml
+#   aa-recipe run Herring_11-06_per_file_sv_filter.yaml --executor dask
 
 recipe:
-  name: "herring_10_15_per_file"
-  description: "HB2407 Herring 10-15 pipeline with per-raw-file processing and a pre-MVBS fan-in."
+  name: "herring_11_06_per_file_sv_filter"
+  description: "HB2407 Herring 11-06 per-raw-file pipeline with two-pass Sv-filtered clustering."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -31,10 +31,10 @@ inputs:
   # selected raw file.
   file_time_start:
     type: str
-    default: "2024-10-15T13:38:52"
+    default: "2024-11-06T09:02:05"
   file_time_end:
     type: str
-    default: "2024-10-15T23:43:36"
+    default: "2024-11-06T14:24:05"
 
   # Default display window shared by every plotting step in this pipeline
   # You can override these by hardcoding values for a specific step or sub-recipe
@@ -138,19 +138,18 @@ steps:
   # the 'seafloor_depth' and 'altitude' features, which features: [cell_cv]
   # does not use, and this pipeline builds no survey-wide EchoData. To use them,
   # collect the per-file lines with a merge_datasets step and wire that here.
-  - include: sub_recipes/processing_lvl_4.yaml
+  - include: sub_recipes/processing_lvl_4_sv_filter.yaml
     input_overrides:
       mvbs: ${compute_mvbs.ds_MVBS}
-      overlay_line_var: "sw_dive_profile"
       sv_clean_unmasked: ${remove_noise.ds_Sv}
       cell_stats_sv: ${compute_cell_stats.ds_Sv}
       min_depth: ${inputs.min_depth}
       max_depth: ${inputs.max_depth}
-      time_min: ${inputs.time_min}
-      time_max: ${inputs.time_max}
+      ping_min: ${inputs.ping_min}
+      ping_max: ${inputs.ping_max}
       x_axis_units: ${inputs.x_axis_units}
       y_axis_units: ${inputs.y_axis_units}
-      # HDBSCAN tuning
-      hdbscan_min_cluster_size_fraction: 0.001
-      hdbscan_min_samples: 7
+      hdbscan_min_cluster_size_fraction: .005
+      hdbscan_min_samples: 4
       hdbscan_cluster_selection_method: "eom"
+      hdbscan_sample_size: 10000000
