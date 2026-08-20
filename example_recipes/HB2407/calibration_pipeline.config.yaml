@@ -1,0 +1,50 @@
+# Example per-user run configuration for aa-recipe.
+#
+# Storage locations and credentials are environment-specific, so they live here
+# rather than in the portable recipe. Copy this file, edit it for your
+# environment, and run the recipe as usual.
+#
+# Config discovery, first found wins:
+#   1. --config <path>
+#   2. $AA_RECIPE_CONFIG
+#   3. <recipe_dir>/<recipe_stem>.config.yaml, for per-recipe settings such as
+#      recipes in one folder needing different buckets
+#   4. ./aa-recipe.config.yaml
+#   5. ~/.config/aa-recipe/config.yaml
+#
+# CLI flags override these values, which in turn override the recipe's own
+# input defaults. Real configs are git-ignored.
+
+
+# Checkpoint cache and exe_temp scratch
+# user_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/user_cache/HB2407/recipe_cache
+# temp_dir:   gs://ggn-nmfs-aa-dev-1-data/Test_Layman/user_cache/HB2407/exe_temp
+
+user_cache_dir: ./recipe_cache
+temp_dir: ./exe_temp
+
+# outputs_dir must stay local for now: calibration artifacts and images are
+# written through pathlib and cannot target object storage yet.
+outputs_dir: ./outputs
+
+# Shared (curated) survey cache tier.
+
+# survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/Survey/survey_cache
+survey_cache_dir: ./survey_cache
+
+
+# Optional: per-user defaults for recipe inputs
+
+inputs:
+  raw_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB2407/raw
+  # raw_input_folder: ./raw
+  # raw_input_folder: gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Echosounder/Data/Raw
+  # cal_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB2407/calibration
+  # line_file_path:   gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB2407/line_files/your_line_file.csv
+
+
+# fsspec storage options for remote paths. Leave commented for Application
+# Default Credentials (the usual case on a Cloud Workstation). Only set this for
+# non-default credentials, e.g. a service-account token file.
+# storage_options:
+#   token: /path/to/service-account.json
