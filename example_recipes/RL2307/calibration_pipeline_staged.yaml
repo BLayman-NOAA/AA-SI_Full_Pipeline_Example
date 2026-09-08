@@ -81,7 +81,7 @@ inputs:
     description: "Subdirectory under the run's outputs folder for the calibration artifacts."
   cruise_id:
     type: str
-    default: "HB2407"
+    default: "RL2307"
     description: "Recorded in every generated single-channel file so it stays traceable to the survey."
   record_author:
     type: str
@@ -95,11 +95,11 @@ inputs:
   file_time_end:
     type: str
     required: false
-    default: "2023-07-17T16:51:34"
+    default: "2023-07-18T19:50:19"
     description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
   conflict_resolution:
     type: str
-    default: "error"
+    default: "interactive"
     description: >
       What to do when one raw channel matches several calibration files.
       "error" lists the conflicts and stops; "interactive" prompts on the
@@ -127,6 +127,12 @@ steps:
     params:
       raw_file_path: ${_item}
       verbose: false
+      # Read a growing prefix rather than all ~1 GiB: the scan starts at 8 MiB
+      # and doubles to this cap, stopping once every channel's Parameter
+      # datagram is in hand. CW files settle on the first rung; RL2307's ~1 GiB
+      # FM files sit behind much larger RAW3 payloads and climb. A file that
+      # never settles within the cap is read whole.
+      max_scan_bytes: 134217728  # 128 MiB
 
   - id: record_raw_configs
     op: record_raw_file_configs
