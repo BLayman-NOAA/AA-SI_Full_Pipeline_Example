@@ -29,7 +29,7 @@
 # outputs_dir must stay local: the calibration artifacts and the report images
 # are written with pathlib, not fsspec.
 
-user_cache_dir: ./recipe_cache
+user_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/hb1603_uc1_test_2
 temp_dir: ./exe_temp
 outputs_dir: ./outputs
 
