@@ -121,10 +121,6 @@ inputs:
     type: str
     default: "1810m"
     description: "Pinned for the same reason the survey tier pins it."
-  window_output_dir:
-    type: path
-    default: "./outputs/sv_window"
-    description: "Where this example writes its echogram."
 
 steps:
 

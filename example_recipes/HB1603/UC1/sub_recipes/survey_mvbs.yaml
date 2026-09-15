@@ -202,6 +202,12 @@ steps:
       range_var_max: ${inputs.range_var_max}
       statistics:
         - cv
+      # Without this the step returns a copy of the whole per-file Sv with the
+      # statistic bolted on, so the checkpoint writes the fine-resolution data a
+      # second time and the merge below drags ping_time and range_sample into a
+      # join that has to outer-join and NaN-pad them. Only cell_cv is read
+      # downstream, by add_auxiliary_features.
+      cells_only: true
 
   # --- Fan-in: now safe, every file shares one depth axis ------------------
 
