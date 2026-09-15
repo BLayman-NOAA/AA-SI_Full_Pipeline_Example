@@ -1,69 +1,44 @@
-# HB1603 Survey Sv - streamed from NCEI, one merged checkpoint
+# HB1603 Per-File Sv - the survey tier's shared, fannable-out half
 #
-# The shared artifact this whole workflow is built on: per-file Sv with depth
-# added, merged and chunked, checkpointed once for the cruise. Everything a
-# user recipe varies - masking, noise removal, binning, windows - sits BELOW
-# this line, so a new analysis reuses the Sv instead of recomputing it.
+# read_raw -> combine_raw -> extract_cal_params -> compute_sv
+#          -> compute_transducer_depth -> ep_add_depth -> crop_range
 #
-#   [per file] read_raw -> combine_raw -> extract_cal_params
-#              -> compute_sv -> ep_add_depth -> crop_range (fixed ceiling)
-#   [fan-in]   merge_survey_sv (concat along ping_time)
-#   [survey]   rechunk_survey_sv -> the shared, chunked Sv store
+# One chain, mapped over the catalogue's raw URLs, ending at a checkpointed
+# per-file Sv. There is deliberately NO fan-in here.
 #
-# Must be included immediately after calibration_from_ncei.yaml: it maps over
-# that file's query_ncei.raw_urls and consumes its build_cal_mapping outputs.
+# WHY THIS IS ITS OWN FILE
 #
-# WHY THERE IS NO DOWNLOAD STEP
+#   range_sample is not a shared axis across HB1603. max_range_m is a ceiling,
+#   not a fixed length, and the cruise runs sample intervals differing by about
+#   11x, so the per-file Sv comes back with 17 distinct range_sample lengths
+#   between 1017 and 11289. Concatenating on ping_time outer-joins all of them
+#   up to the longest and NaN-pads the rest, which puts NaN into echo_range,
+#   where every downstream range binning reads it. Sample index k is also a
+#   different depth in different files, so even equal lengths would silently
+#   stack incomparable depths.
 #
-#   read_raw_files already takes a remote fsspec URL, stages one file at a
-#   time to local scratch, converts it, and deletes the local copy before
-#   fetching the next. Local disk therefore holds at most one raw file per
-#   concurrent instance whatever the size of the cruise, which is the whole
-#   point of streaming, and a separate download step would only add a second
-#   copy to manage. A recipe that needs the companion .bot or .idx alongside
-#   would have to fetch them itself; this analysis takes its seabed from
-#   Echoview line files, so include_bot is false.
+#   So the survey cannot be merged at this level at all. What it CAN do is hand
+#   out per-file Sv, and let each consumer bin onto a shared physical grid
+#   before it fans in. survey_mvbs.yaml is one such consumer; a user recipe
+#   selecting its own window is another.
 #
-# WHY THE CROP IS PER FILE AND USES A FIXED CEILING
+# THE STEPS BELOW ARE BYTE-IDENTICAL TO survey_sv.yaml
 #
-#   Concatenating along ping_time needs every segment to share a range_sample
-#   length. merge_datasets resolves a mismatch by outer-joining to the longest
-#   and NaN-padding the rest, which puts NaN into echo_range, where every
-#   downstream range binning reads it. A fixed crop_max_range_m puts every file
-#   on the same length. The data-driven crop modes cannot be used here: they
-#   would each pick a different depth per file, which is exactly the mismatch
-#   being avoided.
+#   A step's fingerprint folds in its wiring, params and parents, not the file
+#   it was declared in, so every recipe including this file addresses the same
+#   per-file checkpoints. That is what lets a new analysis reuse Sv it did not
+#   compute. Editing anything here invalidates the whole survey tier, so treat
+#   these steps as frozen and put new work in the recipe that includes them.
 #
-#   This assumes a uniform sample interval across the cruise. If the merge
-#   produces NaN in echo_range, that assumption is what broke, and the fix is
-#   to crop by range_sample count rather than by metres.
-#
-# CHOOSING crop_max_range_m
-#
-#   Size it to the deepest data any planned analysis needs, not to the seabed:
-#   the HB1603 seabed reaches roughly 3000 m in places, while the sperm whale
-#   dives bottom out near 1350 m, so the 1800 m default keeps the dive analysis
-#   whole and does not pay to store two kilometres of water nothing reads.
-#
-#   Moving it later is not as expensive as it looks. The crop sits below
-#   compute_sv, so raising the ceiling invalidates crop_survey_range,
-#   merge_survey_sv and rechunk_survey_sv, and nothing above them: measured on
-#   these two recipes, 3 of the 13 survey steps. Sv itself is not recomputed
-#   from raw. It still means re-reading every per-file Sv checkpoint and
-#   rebuilding the merged store, which is survey-wide I/O, so it is a decision
-#   worth making once rather than a trap.
-#
-# WHAT IS DELIBERATELY NOT HERE
-#
-#   No masking, no noise removal, no MVBS. Each is something an analysis would
-#   reasonably want to vary, and each below this line is cheap while above it
-#   is a cruise-wide recompute. remove_background_noise in particular estimates
-#   over a ping window, so it must see contiguous pings and belongs with the
-#   per-window chain rather than astride the survey's file boundaries.
+#   Instances are content-addressed on the raw file URL with no ordinal index,
+#   so list position does not matter. The catalogue query DOES: query_ncei is a
+#   parent, and narrowing file_time_start moves every hash beneath it. Never
+#   narrow the query to get a subset - map the whole cruise and select after
+#   the fan-out.
 
 recipe:
-  name: "hb1603_survey_sv"
-  description: "Per-file Sv and depth streamed from NCEI, fanned in to the shared HB1603 Sv store."
+  name: "hb1603_survey_sv_per_file"
+  description: "Per-file Sv and depth streamed from NCEI. No fan-in: range_sample is not a shared axis."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -83,13 +58,6 @@ inputs:
     type: float
     default: 1800.0
     description: "Fixed range ceiling applied per file. See the note above before changing."
-  survey_chunk_ping_time:
-    type: int
-    default: 1000
-    description: >
-      Ping-time chunk of the shared store. Size it near one analysis window so
-      a windowed read touches few chunks: the dive windows here run about 17
-      minutes, and at roughly one ping per second that is order 1000 pings.
 
 steps:
 
@@ -242,22 +210,3 @@ steps:
       max_range_m: ${inputs.crop_max_range_m}
       drop_trailing_all_nan: false
       outlier_sigma: null
-
-  # --- Fan-in: the shared survey Sv --------------------------------------
-
-  - id: merge_survey_sv
-    op: merge_datasets
-    collect: ${crop_survey_range.ds_Sv}
-    checkpoint: always
-    inputs:
-      datasets: ${crop_survey_range.ds_Sv}
-    params:
-      dim: "ping_time"
-
-  - id: rechunk_survey_sv
-    op: rechunk_dataset
-    checkpoint: always
-    inputs:
-      ds_Sv: ${merge_survey_sv.merged}
-    params:
-      ping_time_chunk: ${inputs.survey_chunk_ping_time}

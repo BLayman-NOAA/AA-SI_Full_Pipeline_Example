@@ -38,7 +38,7 @@ outputs_dir: ./outputs
 # same, just without the sharing.
 #
 # survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/Survey/hb1603_survey_cache
-survey_cache_dir: ./survey_cache
+survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/hb1603_survey_cache
 
 # Remote reads need the gcs extra and application-default credentials:
 #   pip install "aa-recipe-manager[gcs]"

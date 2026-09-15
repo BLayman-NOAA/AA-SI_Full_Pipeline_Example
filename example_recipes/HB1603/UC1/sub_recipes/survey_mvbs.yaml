@@ -1,0 +1,235 @@
+# HB1603 Survey MVBS - the per-file clean-and-grid half, fanned in
+#
+#   [per file]  surface + frequency masks -> apply -> remove_background_noise
+#               -> mask_sparse_bins -> compute_mvbs (pinned depth grid)
+#   [fan-in]    merge_survey_mvbs -> rechunk -> the shared survey store
+#
+# Include this immediately after survey_sv_per_file.yaml. Every step here maps
+# over the same ${query_ncei.raw_urls}, and the parser keeps a mapped chain
+# contiguous by DECLARATION order, so these have to be declared directly after
+# crop_survey_range. Put a non-mapped step between them and the chain splits:
+# the members stop sharing an element context, and a reference to
+# crop_survey_range resolves to the whole 3322-item list instead of this file's
+# Sv.
+#
+# WHY THE GRID IS HERE AND NOT BELOW
+#
+#   This is the correctness fix. range_sample is not comparable across HB1603
+#   (see survey_sv_per_file.yaml), so a fan-in on it pads with NaN and stacks
+#   incomparable depths. compute_mvbs assigns every sample to a bin by the
+#   VALUE of range_var rather than by its range_sample index, so a coarse file
+#   putting one sample in the 100-102 m bin and a fine file putting twelve both
+#   land in the same physical bin. With range_var_max pinned, the bin edges are
+#   identical for every file, so the fan-in has nothing to pad and nothing to
+#   misalign.
+#
+#   range_var_max must be pinned rather than measured. Left unset, echopype
+#   reads the maximum from the data, which forces a compute on a lazy dataset
+#   AND lets each file choose its own axis length, which is the bug.
+#
+# WHAT MOVED UP HERE, AND WHAT IT COSTS
+#
+#   Masking and noise removal have to precede binning, so moving MVBS above the
+#   survey line drags them with it. That is a real loss of flexibility: every
+#   analysis reading this store now inherits one depth bin, one ping bin, one
+#   noise-removal setting and one sparsity threshold. survey_sv.yaml kept these
+#   below the line precisely so an analysis could vary them.
+#
+#   The trade is deliberate. An analysis needing different settings can still
+#   map its own chain over the per-file Sv (see sv_window_example.yaml), which
+#   pays for this half again but reuses every per-file checkpoint underneath.
+#
+#   remove_background_noise estimating per file rather than per dive window is
+#   the one change worth checking against your science. It needs contiguous
+#   pings and one raw file is contiguous, so it is valid, but a file is about
+#   516 pings where a dive window is longer, so the estimate is built from a
+#   smaller sample.
+#
+#   The seafloor mask is NOT here. It reads a hand-verified Echoview line whose
+#   path lives in a per-dive config, so it has no meaning per raw file. It stays
+#   in the window tier and is applied to the gridded product.
+
+recipe:
+  name: "hb1603_survey_mvbs"
+  description: "Per-file masking, noise removal and MVBS on a pinned depth grid, fanned in to the shared HB1603 store."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth above which samples are masked out, in metres."
+  frequencies_to_mask:
+    type: list
+    default: [70, 120, 200]
+    description: "Channel frequencies in kHz to drop before binning."
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Range samples per noise-estimation bin."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Pings per noise-estimation bin. See the header on per-file estimation."
+  range_bin:
+    type: str
+    default: "2m"
+    description: "Depth bin size for the shared grid."
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: "Ping-time bin size for the shared grid."
+  range_var:
+    type: str
+    default: "depth"
+    description: >
+      Variable the bins are built on. "depth" is what makes the grid shared: it
+      is surface-referenced, so channels mounted at different depths and files
+      sampled at different intervals land in the same physical bins.
+  range_var_max:
+    type: str
+    default: "1810m"
+    description: >
+      Deepest value the bins cover. PINNED, NOT MEASURED - this is what fixes
+      the axis length across files and keeps the step lazy. Must clear the
+      deepest depth the crop can produce: the crop is on echo_range and depth
+      adds the transducer's own depth on top, so an 1800 m echo_range ceiling
+      reaches roughly 1809 m of depth.
+  nan_threshold:
+    type: float
+    default: 0.6
+    description: "Fraction of a bin that may be NaN before the bin is dropped."
+  survey_chunk_ping_time:
+    type: int
+    default: 1000
+    description: >
+      Ping-time chunk of the shared store. On the MVBS grid one ping index is
+      ping_time_bin wide, so 1000 covers far more time than it did on raw
+      pings; size it near one analysis window.
+
+steps:
+
+  # --- Per-file clean and grid, contiguous with the chain above -----------
+
+  - id: survey_surface_mask
+    op: create_surface_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${crop_survey_range.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: survey_frequency_mask
+    op: create_frequency_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${crop_survey_range.ds_Sv}
+    params:
+      frequencies_to_mask: ${inputs.frequencies_to_mask}
+
+  - id: survey_combine_masks
+    op: combine_masks
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      masks:
+        - ${survey_surface_mask.mask}
+        - ${survey_frequency_mask.mask}
+    params:
+      mode: "and"
+
+  - id: survey_apply_mask
+    op: apply_sv_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${crop_survey_range.ds_Sv}
+      mask: ${survey_combine_masks.mask}
+
+  - id: survey_remove_noise
+    op: remove_background_noise
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${survey_apply_mask.ds_Sv}
+    params:
+      range_sample_num: ${inputs.noise_range_sample_num}
+      ping_num: ${inputs.noise_ping_num}
+
+  - id: survey_mask_sparse
+    op: mask_sparse_bins
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${survey_remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      nan_threshold: ${inputs.nan_threshold}
+
+  # checkpoint: always for the same reason crop_survey_range is checkpointed:
+  # it is this half's surviving per-file output, and the fan-in below reloads
+  # it from the cache rather than carrying a graph rooted in deleted scratch.
+  - id: survey_file_mvbs
+    op: compute_mvbs
+    map_over: ${query_ncei.raw_urls}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${survey_mask_sparse.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.range_var_max}
+
+  # Per-cell CV, on the same grid as the MVBS above and from the same pre-sparse
+  # Sv, so the statistic describes the cell the MVBS value came from.
+  #
+  # range_var_max is pinned for the reason compute_mvbs pins it, and the reason
+  # is sharper here: without it the cell grid is built out to each file's own
+  # deepest sample, so the fan-in below would outer-join cell_echo_range and
+  # NaN-pad every file that did not reach the deepest. Pinning it also keeps the
+  # step lazy, since reading the extent from the data forces a compute.
+  - id: survey_cell_stats
+    op: compute_per_cell_statistics
+    map_over: ${query_ncei.raw_urls}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${survey_remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.range_var_max}
+      statistics:
+        - cv
+
+  # --- Fan-in: now safe, every file shares one depth axis ------------------
+
+  # Not checkpointed: it feeds the rechunk immediately below, and writing both
+  # would store the survey twice. The rechunk is the store users read.
+  - id: merge_survey_mvbs
+    op: merge_datasets
+    collect: ${survey_file_mvbs.ds_MVBS}
+    inputs:
+      datasets: ${survey_file_mvbs.ds_MVBS}
+    params:
+      dim: "ping_time"
+
+  - id: rechunk_survey_mvbs
+    op: rechunk_dataset
+    checkpoint: always
+    inputs:
+      ds_Sv: ${merge_survey_mvbs.merged}
+    params:
+      ping_time_chunk: ${inputs.survey_chunk_ping_time}
+
+  # Concatenated on the cell grid's own time axis. Safe for the same reason the
+  # MVBS merge is: every file was binned to the same pinned extent.
+  - id: merge_survey_cell_stats
+    op: merge_datasets
+    collect: ${survey_cell_stats.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${survey_cell_stats.ds_Sv}
+    params:
+      dim: "cell_ping_time"

@@ -5,7 +5,8 @@
 # mapping, so a user can review the standardized channels and correct or
 # discard them before anything is matched against them.
 #
-# Pair it with calibration_mapping.yaml, which is phase 2.
+# Pair it with calibration_mapping.yaml, which is phase 2, and optionally
+# save_calibration.yaml, which is phase 3 and archives the finished result.
 #
 # THE FOUR STEPS BELOW ARE COPIED VERBATIM INTO calibration_mapping.yaml, and
 # they must stay that way. Cache entries are addressed by step hash, so the
@@ -33,6 +34,10 @@
 # sharing silently does not happen: the run config is discovered per recipe as
 # <recipe_stem>.config.yaml, so either keep the two config files identical or
 # pass --config explicitly.
+#
+# The same three recipes are what the calibration service exposes as its
+# three HTTP calls. See calibration_service_api.md
+# in AA-SI_calibration/recipes/documentation/.
 #
 # Usage:
 #   aa-recipe run calibration_standardize.yaml

@@ -19,6 +19,7 @@ RL2307 = Path(__file__).parent.parent / "example_recipes" / "RL2307"
 PHASE1 = RL2307 / "calibration_standardize.yaml"
 PHASE2 = RL2307 / "calibration_mapping.yaml"
 STAGED = RL2307 / "calibration_pipeline_staged.yaml"
+ARCHIVE = RL2307 / "save_calibration.yaml"
 
 #: The stages both phase recipes declare. scan_raw_config is the expensive one:
 #: thousands of raw files, one cache entry each.
@@ -119,3 +120,19 @@ def test_the_staged_recipe_still_shares_the_raw_scan(tmp_path):
 
     for step in ("initial_setup", "scan_raw_config", "record_raw_configs"):
         assert staged[step] == phase1[step]
+
+
+@pytest.mark.skipif(not ARCHIVE.exists(), reason="archive recipe not present")
+def test_the_archive_recipe_stands_alone():
+    """Phase 3 shares no step with the other two, so it joins no hash contract.
+
+    It runs on the data those phases returned, or on the folder they left
+    behind, and re-running the raw scan to reach either would defeat the point
+    of archiving as a separate step.
+    """
+    from aa_recipe_manager import api
+
+    archive = api.load(ARCHIVE)
+
+    assert "save_calibration" in archive.nodes
+    assert not set(archive.nodes) & set(SHARED_STEPS)

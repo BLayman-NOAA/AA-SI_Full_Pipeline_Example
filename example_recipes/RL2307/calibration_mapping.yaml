@@ -39,6 +39,12 @@
 # <recipe_stem>.config.yaml, so either keep the two config files identical or
 # pass --config explicitly.
 #
+# Once the mapping is clean, save_calibration.yaml (phase 3) writes the
+# mapping, the provenance and the standardized channel files to a directory
+# the survey keeps. The same three recipes are what the calibration service
+# exposes as its three HTTP calls. See calibration_service_api.md
+# in AA-SI_calibration/recipes/documentation/.
+#
 # Usage:
 #   aa-recipe run calibration_mapping.yaml
 #   aa-recipe run calibration_mapping.yaml --input conflict_resolution=interactive
@@ -211,3 +217,24 @@ outputs:
     description: >
       The standardized channels the mapping was actually built from, carrying
       their final file keys after any edits were applied.
+  provenance:
+    step_id: build_cal_mapping
+    output_name: provenance
+    description: >
+      What calibration was applied where, and why, per channel. Runs of raw
+      files that behaved the same way collapse into one segment carrying a
+      time range, so a cruise of thousands of files reports as a handful of
+      segments per channel. Each says whether the calibration matched
+      outright, matched only because a tolerance was widened, or matched
+      nothing, and for anything but a clean match names the field and the two
+      values behind it.
+
+      JSON-safe, so a server can return it to a client without reading the
+      file off disk. Pair it with conflicts: conflicts is what the caller has
+      to answer, this is what the run did.
+  provenance_path:
+    step_id: build_cal_mapping
+    output_name: provenance_path
+    description: >
+      Where the same report was written as YAML, under mapping_files/ in the
+      calibration outputs.

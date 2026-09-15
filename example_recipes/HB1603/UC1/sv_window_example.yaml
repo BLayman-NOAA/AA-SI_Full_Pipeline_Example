@@ -1,0 +1,204 @@
+# Branching off the per-file Sv cache - a worked example
+#
+# Proves the thing full_analysis_revised.yaml's restructure is supposed to buy:
+# that moving the fan-in below MVBS does not cut users off from the Sv. This
+# recipe computes no Sv of its own. It reuses the per-file checkpoints the
+# survey run already wrote, takes a time window out of them, and branches.
+#
+#   [cached]   read_raw -> ... -> crop_survey_range     (3322 cache hits)
+#   [new]      window_sv  (per file, drops the misses)
+#   [fan-in]   merge_window_sv -> the window's Sv
+#   [analysis] your own MVBS, at your own bin sizes
+#
+#   aa-recipe run sv_window_example.yaml --executor dask --dask-workers 4
+#
+# HOW THE CACHE IS REACHED, AND THE TWO WAYS TO LOSE IT
+#
+#   A per-file checkpoint is addressed by derive_instance_hash(base_hash,
+#   {"item": <raw file URL>}). The discriminator carries the URL and NO ordinal
+#   index, so a recipe mapping over a different-length list still hits the same
+#   entries. The base_hash is the catch: it is a Merkle hash over the step's
+#   parents, so anything upstream that moves takes every per-file entry with it.
+#
+#   1. DO NOT narrow the catalogue query to get a subset. query_ncei is a parent
+#      of the whole chain; narrowing file_time_start changes every per-file hash
+#      and you recompute the survey from raw. Measured, not assumed: all seven
+#      chain steps change. survey_preprocess.yaml's header claims a sliced run
+#      and a whole-cruise run share per-file checkpoints - that half of it is
+#      wrong. Map the whole cruise and select AFTER the fan-out, which is what
+#      window_sv below does.
+#
+#   2. DO NOT edit sub_recipes/survey_sv_per_file.yaml or change what this
+#      recipe passes into it. The include below is byte-identical to the one in
+#      full_analysis_revised.yaml, down to the input values, because a step
+#      fingerprint folds in the pipeline inputs it references. That identity is
+#      the whole mechanism.
+#
+#   Mapping over all 3322 files is not free even when every one is a hit: the
+#   loads measured 1378s wall at 16 workers. It is two orders of magnitude
+#   cheaper than the 43,500 CPU-seconds of the chain above it.
+#
+# WHY window_sv IS DECLARED WHERE IT IS
+#
+#   Directly after the include, with no step in between. The parser keeps a
+#   mapped chain contiguous by DECLARATION order and only groups consecutive
+#   members, so a step landing between crop_survey_range and this one splits the
+#   chain - and a split chain's members stop sharing an element context, so
+#   ${crop_survey_range.ds_Sv} would resolve to the whole 3322-item list instead
+#   of this file's Sv.
+#
+# allow_empty IS WHAT MAKES THE FAN-OUT SURVIVABLE
+#
+#   The window touches a handful of files; the other ~3300 select no pings. With
+#   allow_empty false (the default, and right for a single merged store) each of
+#   those is a hard error. With it set they return nothing, and merge_datasets
+#   drops empty instances when it collects, so the fan-in keeps exactly the files
+#   the window covers.
+#
+# ONE THING TO CHECK BEFORE TRUSTING THE MERGE
+#
+#   merge_window_sv concatenates on ping_time, which still requires the files it
+#   keeps to share a range_sample length. Across the whole cruise they do not -
+#   HB1603 has 17 distinct lengths, which is why the survey tier grids before it
+#   fans in. Within one dive's few contiguous files they usually do, but it is
+#   worth confirming rather than assuming: if echo_range comes back with NaN in
+#   it, the window spans a sample-interval change and this recipe needs the same
+#   per-file gridding the survey tier uses.
+
+recipe:
+  name: "hb1603_sv_window_example"
+  description: "Take a time window out of the cached per-file Sv and branch, without recomputing Sv."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+
+  # --- These three MUST match full_analysis_revised.yaml exactly -----------
+  #
+  # They are the inputs the cached chain references, so a different value here
+  # is a different fingerprint and a full recompute. Changing one is a decision
+  # about the survey tier, not about this analysis.
+
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files. Must match the survey run."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+    description: "Must match the survey run."
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: "Must match the survey run, or every per-file Sv is recomputed."
+
+  # --- Yours to vary freely -----------------------------------------------
+  #
+  # Everything below sits under the cached chain, so it changes only this
+  # recipe's own steps.
+
+  window_start:
+    type: str
+    default: "2016-07-07T00:00:00"
+    description: "Inclusive ISO lower bound of the window to pull out of the survey."
+  window_end:
+    type: str
+    default: "2016-07-08T00:00:00"
+    description: "Inclusive ISO upper bound."
+  range_bin:
+    type: str
+    default: "1m"
+    description: >
+      Your own depth bin, deliberately finer than the survey store's 2m. The
+      point of branching off the Sv rather than the gridded store is that this
+      is yours to choose.
+  ping_time_bin:
+    type: str
+    default: "5s"
+    description: "Your own ping bin."
+  range_var_max:
+    type: str
+    default: "1810m"
+    description: "Pinned for the same reason the survey tier pins it."
+  window_output_dir:
+    type: path
+    default: "./outputs/sv_window"
+    description: "Where this example writes its echogram."
+
+steps:
+
+  # --- The cached survey tier, included verbatim ---------------------------
+
+  - include: sub_recipes/calibration_from_ncei.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/survey_sv_per_file.yaml
+    input_overrides:
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+      crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # --- The branch: still mapped, still contiguous --------------------------
+
+  # Mapped over the same source as the chain above so it joins that chain and
+  # sees one file's Sv per instance. Nothing may be declared between this and
+  # the include above; see the header.
+  #
+  # Not checkpointed: it is a cheap slice of an already-durable input, and
+  # caching it would write one entry per catalogue file per window.
+  - id: window_sv
+    op: select_ping_time_range
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${crop_survey_range.ds_Sv}
+    params:
+      start: ${inputs.window_start}
+      end: ${inputs.window_end}
+      allow_empty: true
+
+  - id: merge_window_sv
+    op: merge_datasets
+    collect: ${window_sv.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${window_sv.ds_Sv}
+    params:
+      dim: "ping_time"
+
+  # --- Branch out from here ------------------------------------------------
+
+  # Your own grid, at your own resolution, on Sv you did not pay to compute.
+  # This is the step the restructure was meant to keep possible: the survey
+  # store is gridded at 2m/10s, and nothing about that constrains this.
+  - id: window_mvbs
+    op: compute_mvbs
+    checkpoint: always
+    inputs:
+      ds_Sv: ${merge_window_sv.merged}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: "depth"
+      range_var_max: ${inputs.range_var_max}
+
+  - id: plot_window
+    op: plot_sv_echogram
+    regenerate: if-missing
+    inputs:
+      ds_Sv: ${window_mvbs.ds_MVBS}
+      ds_Sv_source: ${merge_window_sv.merged}
+    params:
+      min_depth: 0
+      x_axis_units: "bins"
+      y_axis_units: "meters"
+
+outputs:
+  window_sv:
+    step_id: merge_window_sv
+    output_name: merged
+  window_mvbs:
+    step_id: window_mvbs
+    output_name: ds_MVBS
