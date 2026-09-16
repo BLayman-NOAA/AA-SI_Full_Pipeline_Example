@@ -220,6 +220,13 @@ steps:
       datasets: ${survey_file_mvbs.ds_MVBS}
     params:
       dim: "ping_time"
+      # Both fan-ins here are over per-file BINNED products. compute_mvbs and
+      # compute_per_cell_statistics anchor their time bins to a global origin,
+      # so a file boundary landing inside a bin makes both files emit that bin,
+      # each holding part of its pings. Averaging them is what keeps the merged
+      # index unique; without it every downstream reindex fails, which is where
+      # add_aux_features raised InvalidIndexError 5h42m into a run.
+      on_duplicate: "mean"
 
   - id: rechunk_survey_mvbs
     op: rechunk_dataset
@@ -239,3 +246,4 @@ steps:
       datasets: ${survey_cell_stats.ds_Sv}
     params:
       dim: "cell_ping_time"
+      on_duplicate: "mean"
