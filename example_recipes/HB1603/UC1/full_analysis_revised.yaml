@@ -71,6 +71,25 @@
 #   the depth bin. At 2 m bins against a seabed near 2990 m that is acceptable;
 #   at coarser bins, check it.
 #
+# OVERLAPPING DIVES
+#
+#   Four of the 13 dives overlap another in time: OE29/OE32 on 7 July by ten
+#   minutes, and OE61/OE62/OE64 on 25 July by eleven to sixteen minutes each.
+#   Two whales under the ship at once is real, and it has two consequences.
+#
+#   The pooled clustering must see each cell once. Every window is a slice of
+#   the same survey store, so the shared minutes are the same cells twice, and
+#   both dive fan-ins dedup with on_duplicate: "first". Without it the merged
+#   ping_time index is duplicated and out of order, and add_aux_features
+#   raises InvalidIndexError, which is where two runs stopped.
+#
+#   A dive's lines cannot ride on the merged dataset. Two dives at one ping
+#   have two depths, and a (ping_time,) variable holds one; averaging them
+#   makes a profile no whale swam. So no add_line_overlay step sits before the
+#   fan-in. generate_sv_codes reads each dive's three lines onto that dive's
+#   own slice, from the paths its window already carries, and the report has
+#   no single profile to overlay.
+#
 # Sanity-check the shape before a long run:
 #   aa-recipe dry-run full_analysis_revised.yaml --visualize
 
@@ -288,39 +307,6 @@ steps:
       ds_Sv: ${select_window.ds_Sv}
       mask: ${create_seafloor_mask.mask}
 
-  # The dive profile, attached on the grid the codes are read off. Three steps
-  # because a dive profile ships as three Echoview exports, and each names which
-  # of the window's line paths to read since ${_item} cannot be indexed.
-  - id: add_dive_fit
-    op: add_line_overlay
-    map_over: ${plan_dives.windows}
-    inputs:
-      ds: ${apply_mask.ds_Sv}
-    params:
-      window: ${_item}
-      window_key: "dive_fit_evl"
-      line_name: "dive_fit"
-
-  - id: add_dive_u99
-    op: add_line_overlay
-    map_over: ${plan_dives.windows}
-    inputs:
-      ds: ${add_dive_fit.ds}
-    params:
-      window: ${_item}
-      window_key: "dive_u99_evl"
-      line_name: "dive_u99"
-
-  - id: add_dive_l99
-    op: add_line_overlay
-    map_over: ${plan_dives.windows}
-    inputs:
-      ds: ${add_dive_u99.ds}
-    params:
-      window: ${_item}
-      window_key: "dive_l99_evl"
-      line_name: "dive_l99"
-
   # The same window, against the cell grid's own time axis. dim is what makes
   # this reusable: compute_per_cell_statistics stores each bin's left edge on
   # cell_ping_time, not ping_time, so the default would not find a coordinate to
@@ -335,15 +321,20 @@ steps:
       window: ${_item}
       dim: "cell_ping_time"
 
-  # Safe to concatenate because every window came off one survey-wide grid.
+  # Comparable because every window came off one survey-wide grid. Not
+  # disjoint: see OVERLAPPING DIVES in the header. The shared minutes are the
+  # same cells cut from the same store twice, so "first" keeps one copy and
+  # sorts, and the pooled clustering counts each cell once. Nothing
+  # dive-specific is on this axis to lose.
   - id: merge_dive_mvbs
     op: merge_datasets
-    collect: ${add_dive_l99.ds}
+    collect: ${apply_mask.ds_Sv}
     checkpoint: always
     inputs:
-      datasets: ${add_dive_l99.ds}
+      datasets: ${apply_mask.ds_Sv}
     params:
       dim: "ping_time"
+      on_duplicate: "first"
 
   - id: merge_dive_cell_stats
     op: merge_datasets
@@ -353,6 +344,7 @@ steps:
       datasets: ${select_cell_window.ds_Sv}
     params:
       dim: "cell_ping_time"
+      on_duplicate: "first"
 
   # --- Machine learning over the pooled cells -----------------------------
 
@@ -444,7 +436,6 @@ steps:
       # Same reason as plot_window_mvbs, and it matters more here: this op
       # defaults to "datetime", which would draw the whole 38-day span.
       x_axis_units: "bins"
-      overlay_line_var: "dive_fit"
       cluster_stats_sv_data_var: "Sv"
 
   # --- SVCodes and the report tables --------------------------------------
@@ -458,6 +449,10 @@ steps:
   # interpreted from: each row carries its cell 18 and 38 kHz Sv next to its
   # code, so grouping by code gives the per-cluster statistics that say what
   # each id actually is.
+  #
+  # The dive lines are read here, per dive, onto that dive's slice of the
+  # merged grid, from the dive_fit_evl / dive_u99_evl / dive_l99_evl paths on
+  # its window. See OVERLAPPING DIVES for why they are not attached upstream.
   - id: generate_sv_codes
     op: custom
     checkpoint: always
@@ -474,7 +469,7 @@ steps:
       description: Write per-dive SVCode CSVs from the embedded clustering.
       callable_path: aa_si_utils.dive_profiles.generate_sv_codes
       cache_key: dive_profiles_generate_sv_codes
-      version: "1"
+      version: "2"
       inputs:
         ds: {type: Dataset}
       params:
