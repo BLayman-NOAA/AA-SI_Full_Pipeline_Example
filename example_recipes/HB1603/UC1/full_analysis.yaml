@@ -1,46 +1,104 @@
 # HB1603 Full Dive-Profile Analysis - 13 dives, one clustering, per-dive codes
 #
-# The production run of the investigation. Same structure as
-# dive_profiles.yaml, with three deliberate differences:
+# The production run of the investigation. Every localized HB1603 sperm whale
+# dive but one is cut out of a shared survey store, pooled into a single
+# HDBSCAN clustering, and projected back onto each dive as per-ping SVCodes and
+# the depth-interval duration tables from the NEFSC report.
 #
-#   1. SWD_20160703-OE20 is excluded. Its dive data is known to be wrong, and a
-#      pooled clustering has no way to quarantine one bad dive: every cell it
-#      contributes shapes the cluster boundaries that every other dive is then
-#      coded against.
-#   2. HDBSCAN is sized for the pooled set rather than a three-dive slice.
-#   3. The echograms plot on a bin axis, not a time axis. See below - the
-#      reason is not the one it looks like.
-#
-#   survey tier   calibration scanned in place from NCEI, then per-file Sv
-#                 merged into the shared store   [included byte-identically]
+#   survey tier   calibration scanned in place from NCEI, per-file Sv, then
+#                 per-file masking and binning onto one pinned depth grid,
+#                 fanned in to the shared store        [sub_recipes, shared]
 #   plan          read the dive configs, keep the 13 named below
-#   user tier     one chain per dive, fanned in to a combined MVBS
+#   user tier     one chain per dive off the gridded store, fanned in
 #   ML            reshape -> normalize -> HDBSCAN -> label every point
 #   report        per-dive SVCode CSVs and the duration tables
 #
-#   aa-recipe run full_analysis.yaml --executor dask --dask-workers 6
+#   aa-recipe run full_analysis.yaml --executor dask --dask-workers 16
+#
+# THE SURVEY TIER IS SHARED, AND PAID FOR ONCE
+#
+#   Everything above plan_dives is included from sub_recipes/, and
+#   survey_preprocess.yaml includes exactly the same steps with the same
+#   inputs, so the two address one cache. Curate the shared tier with that
+#   recipe and --cache-write-tier survey. After that every survey step here is
+#   a cache hit: the whole 3322-file chain is pruned without dispatching a
+#   single file, and this recipe reaches the ML in well under a minute. Change
+#   anything below the survey line as often as you like at that price.
+#
+#   Two inputs are shared with the survey tier and must equal
+#   survey_preprocess.yaml's: crop_max_range_m and mvbs_range_var_max.
+#   survey_chunk_ping_time is shared too but only touches the rechunk. Do not
+#   narrow the catalogue query to save time: query_ncei is a parent of every
+#   survey step, so a narrowed query addresses a different cache and recomputes
+#   the cruise from raw. To analyse a subset, see sv_window_example.yaml.
+#
+# WHY THE SURVEY FANS IN BELOW THE DEPTH GRID
+#
+#   range_sample is not a shared axis across HB1603. max_range_m is a ceiling,
+#   not a fixed length, and the cruise runs sample intervals differing by about
+#   11x, so per-file Sv comes back with 17 distinct range_sample lengths
+#   between 1017 and 11289. Concatenated on ping_time, xarray outer-joins to
+#   the longest and NaN-pads the rest: NaN lands in echo_range where every
+#   range binning reads it, and sample index k is a different depth in
+#   different files. It also does not fit. 1.69M pings x 11289 samples x 4
+#   channels of float64 is about 611 GB for Sv alone.
+#
+#   So each file is binned to a pinned depth grid first. compute_mvbs assigns
+#   samples to bins by the VALUE of the range variable, not its index, so a
+#   coarse file and a fine file land in the same physical bins, and a pinned
+#   range_var_max gives every file the same axis. The fan-in then has nothing
+#   to pad and nothing to misalign. The two halves are:
+#
+#     sub_recipes/survey_sv_per_file.yaml   per-file Sv, no fan-in
+#     sub_recipes/survey_mvbs.yaml          per-file clean + grid, then fan in
+#
+#   The cost is flexibility. Masking and noise removal must precede binning, so
+#   every analysis reading the shared store inherits one depth bin, one ping
+#   bin and one noise setting. sv_window_example.yaml is the escape hatch: map
+#   your own chain over the per-file Sv and choose your own.
+#
+#   cell_cv comes off survey_remove_noise, which carries the surface and
+#   frequency masks but not the seafloor mask; that is applied per dive, below.
+#   Cells under the seabed therefore carry a CV. The MVBS they are joined to is
+#   seafloor-masked, so those cells are NaN on the data side and should not
+#   reach the clustering, but confirm it on the output rather than assume it.
+#
+# SEAFLOOR MASKING IS PER DIVE, ON THE GRID
+#
+#   It reads a hand-verified Echoview line named in a per-dive config, so it has
+#   no meaning per raw file and stays in the user tier. It is applied to the
+#   gridded product rather than to full-resolution Sv, so it is quantised to
+#   the depth bin. At 2 m bins against a seabed near 2990 m that is acceptable;
+#   at coarser bins, check it.
+#
+# OVERLAPPING DIVES
+#
+#   Four of the 13 dives overlap another in time: OE29/OE32 on 7 July by ten
+#   minutes, and OE61/OE62/OE64 on 25 July by eleven to sixteen minutes each.
+#   Two whales under the ship at once is real, and it has two consequences.
+#
+#   The pooled clustering must see each cell once. Every window is a slice of
+#   the same survey store, so the shared minutes are the same cells twice, and
+#   both dive fan-ins dedup with on_duplicate: "first". Without it the merged
+#   ping_time index is duplicated and out of order, and every downstream
+#   reindex raises InvalidIndexError.
+#
+#   A dive's lines cannot ride on the merged dataset. Two dives at one ping
+#   have two depths, and a (ping_time,) variable holds one; averaging them
+#   makes a profile no whale swam. So no add_line_overlay step sits before the
+#   fan-in. generate_sv_codes reads each dive's three lines onto that dive's
+#   own slice, from the paths its window already carries, and the report does
+#   the same through overlay_windows: one segment per dive, read onto that
+#   dive's own pings, so the shared minutes draw both whales.
 #
 # THE PLOTS MUST USE x_axis_units: bins
 #
-#   Size is not the problem. The pooled grid is 1285 ping bins by 905 depth
-#   bins, about 1.16 M cells, roughly five times the three-dive smoke test and
-#   well within what the plotting ops handle.
-#
-#   The horizontal axis is. The 13 dives carry 214 minutes of data spread
-#   across 38 days, and the fan-in concatenates on real ping_time, so any axis
-#   built from clock time draws 0.4% data and 99.6% whitespace: each dive
-#   becomes a hairline a fraction of a pixel wide. That rules out "datetime"
-#   and equally "seconds", which is elapsed time from the first ping and so
-#   carries exactly the same 38-day gaps.
-#
-#   "bins" plots against MVBS bin index instead. The empty time between dives
-#   was never binned, so it does not exist on that axis: the 13 dives sit side
-#   by side, each about 100 bins wide, still in proportion to its own duration.
-#   The only thing given up is a clock-time axis across the set, which was
-#   unreadable anyway. "pings" behaves the same way and labels differently.
-#
-#   For one dive on a real time axis, window a plot with time_min / time_max.
-#   embed_results is checkpointed, so an extra figure costs only the figure.
+#   The 13 dives carry 214 minutes of data spread across 38 days, and the
+#   fan-in concatenates on real ping_time, so any axis built from clock time
+#   draws 0.4% data and 99.6% whitespace: each dive becomes a hairline. That
+#   rules out "datetime" and equally "seconds". "bins" plots against MVBS bin
+#   index; the empty time between dives was never binned, so the 13 dives sit
+#   side by side, each in proportion to its own duration.
 #
 #   Cluster ids are also interpretable without any figure: generate_sv_codes
 #   writes each cell's 18 and 38 kHz Sv next to its code, so the per-cluster
@@ -48,41 +106,16 @@
 #
 # SIZING HDBSCAN FOR THE POOLED SET
 #
-#   sample_size 1200000 is a ceiling that is not expected to bind. The pooled
-#   grid holds 1.16 M cells before masking, so HDBSCAN fits every point and
-#   assign_clusters_to_all_points has nothing left to predict.
+#   sample_size 1200000 is a ceiling that is not expected to bind: the pooled
+#   grid holds about 1.16 M cells before masking, so HDBSCAN fits every point
+#   and assign_clusters_to_all_points has nothing left to predict.
 #
-#   min_cluster_size_fraction is a fraction of the points actually fitted,
-#   after any sample_size cap, so the number means the same thing whether or
-#   not the ceiling binds: a cluster must hold this share of what the model
-#   saw. Raising sample_size raises the absolute floor with it.
-#
-#   Against the smoke test 0.02 of a much smaller set, 0.01 is a deliberate
-#   loosening: a cluster must now be about twice as large in absolute terms to
-#   survive, which is what stops one dive local structure from being promoted
-#   to a survey-wide code.
-#
-# SURVEY SCOPE AND COST
-#
-#   The catalogue query is NOT narrowed here. It is left at
-#   calibration_from_ncei.yaml defaults, which is the whole cruise: 3322 files,
-#   roughly 175 GB of raw. Counted against the archive, not estimated.
-#
-#   That is the expensive half of this run by a wide margin, and only 28 of
-#   those files contain a dive. It is left whole for two reasons. The Sv is the
-#   reusable artifact - a narrowed query produces Sv no other analysis can
-#   find, because a query param is part of every hash beneath it - and leaving
-#   it alone is what makes every survey step here identical to
-#   survey_preprocess.yaml and dive_profiles.yaml, so the three share one cache.
-#
-#   If the full cruise is more than this run needs, do not narrow the query in
-#   this file. Follow the slicing note in survey_preprocess.yaml: narrow
-#   file_time_start / file_time_end there, run the per-file work a week at a
-#   time, then one full-window run to assemble the merge. Per-file checkpoints
-#   are content-addressed on the file URL, so they are found either way.
-#
-#   For reference, the five days carrying these 13 dives hold 355 files:
-#   07-07 (67), 07-19 (65), 07-25 (81), 08-02 (79), 08-14 (63).
+#   min_cluster_size_fraction is a fraction of the points actually fitted, so
+#   the number means the same thing whether or not the ceiling binds. 0.01 on
+#   the pooled set is a deliberate loosening against the 0.02 an earlier
+#   three-dive run used: a cluster must be about twice as large in absolute
+#   terms to survive, which is what stops one dive's local structure from being
+#   promoted to a survey-wide code.
 #
 # CLUSTER IDS ARE RUN SCOPED
 #
@@ -132,6 +165,13 @@ inputs:
     type: int
     default: 1000
     description: "Must match survey_preprocess.yaml exactly."
+  seafloor_buffer_m:
+    type: float
+    default: 10.0
+    description: >
+      Metres above the seabed line that are also masked out. Applied to the
+      gridded product now rather than to full-resolution Sv, so it is quantised
+      to range_bin.
   json_dir:
     type: path
     default: "./Auxiliary/JSON_Files"
@@ -186,7 +226,7 @@ inputs:
     default: 0.01
     description: >
       Minimum cluster size as a fraction of the points HDBSCAN is fitted on.
-      Half the smoke test 0.02 against a pooled set several times larger, so
+      Half the 0.02 an earlier three-dive run used, against a pooled set several times larger, so
       the absolute floor roughly doubles.
   min_samples:
     type: int
@@ -202,31 +242,35 @@ inputs:
 
 steps:
 
-  # --- Survey tier: included byte-identically with survey_preprocess.yaml --
+  # --- Survey tier: per-file Sv, then per-file grid, then the fan-in ------
   #
   # No input_overrides on the query window on purpose. Overriding it, even to
   # the value it already has, would change these hashes: a step fingerprint
-  # folds in the pipeline inputs it references, so wiring a literal to an input
-  # is not cache-neutral. Leaving it alone is what keeps this tier shared with
-  # survey_preprocess.yaml and dive_profiles.yaml.
+  # folds in the pipeline inputs it references. Leaving it alone is what keeps
+  # the per-file half addressable by sv_window_example.yaml and by the earlier
+  # runs whose checkpoints this reuses.
 
   - include: sub_recipes/calibration_from_ncei.yaml
     input_overrides:
       cal_input_folder: ${inputs.cal_input_folder}
       calibration_output_dir: ${inputs.calibration_output_dir}
 
-  - include: sub_recipes/survey_sv.yaml
+  # These per-file steps are frozen (see the header of that file), so every
+  # crop_survey_range checkpoint already written is a hit here.
+  - include: sub_recipes/survey_sv_per_file.yaml
     input_overrides:
       calibration_dict: ${build_cal_mapping.calibration_dict}
       mapping_dict: ${build_cal_mapping.mapping_dict}
       crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # Must come directly after the include above and before anything non-mapped:
+  # a mapped chain is kept contiguous by declaration order, and a split chain's
+  # members stop sharing an element context.
+  - include: sub_recipes/survey_mvbs.yaml
+    input_overrides:
+      range_var_max: ${inputs.mvbs_range_var_max}
       survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
 
-  # --- Plan the dives ------------------------------------------------------
-
-  # Below the survey checkpoint, so naming the dives costs nothing in the tier
-  # above: include_labels changes this step hash and the per-dive chains
-  # beneath it, and no survey step at all.
   - id: plan_dives
     op: custom
     checkpoint: always
@@ -257,71 +301,86 @@ steps:
         source: git
         url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
 
-  # --- User tier: one chain per dive, fanned in ---------------------------
+  # --- User tier: one chain per dive, off the gridded survey store ---------
 
-  - include: sub_recipes/dive_windows.yaml
-    input_overrides:
-      survey_sv: ${rechunk_survey_sv.ds_Sv}
-      windows: ${plan_dives.windows}
-      # One pinned depth axis for every window, so the fan-in has nothing to
-      # pad. Spelled as a unit string because echopype parses it, and kept
-      # above crop_max_range_m by hand: the crop is on echo_range and depth
-      # adds the transducer's own depth on top of it.
-      range_var_max: ${inputs.mvbs_range_var_max}
-
-  # --- Machine learning over the pooled cells -----------------------------
-
-
-  # The pre-MVBS Sv, fanned in, purely so the MVBS plot below has a ping-index
-  # reference frame. checkpoint: never because nothing else reads it and the
-  # plot only touches its ping_time and depth coordinates, not its Sv values.
-  #
-  # It reads the fan-in rather than mapping over the windows because remove_noise
-  # is mapped: a plain step reading it gets the whole fanned-out list. Mapping
-  # this over the same windows does not help either, since dive_windows.yaml
-  # ends with its own collect steps and a step declared here lands after them,
-  # in a different chain, which the parser rejects.
-  - id: merge_window_sv
-    op: merge_datasets
-    collect: ${remove_noise.ds_Sv}
-    checkpoint: never
+  - id: select_window
+    op: select_ping_time_range
+    map_over: ${plan_dives.windows}
+    checkpoint: always
     inputs:
-      datasets: ${remove_noise.ds_Sv}
+      ds_Sv: ${rechunk_survey_mvbs.ds_Sv}
+    params:
+      window: ${_item}
+
+  # allow_empty is left at its default here. This reads one merged store, so a
+  # dive window that selects no pings means the window is wrong and should fail
+  # rather than quietly drop a dive from the study.
+
+  - id: seafloor_line
+    op: read_seafloor_line
+    map_over: ${plan_dives.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      window: ${_item}
+      edge_extend_s: null
+
+  - id: create_seafloor_mask
+    op: create_seafloor_mask
+    map_over: ${plan_dives.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      seafloor_depth: ${seafloor_line.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  - id: apply_mask
+    op: apply_sv_mask
+    map_over: ${plan_dives.windows}
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+      mask: ${create_seafloor_mask.mask}
+
+  # The same window, against the cell grid's own time axis. dim is what makes
+  # this reusable: compute_per_cell_statistics stores each bin's left edge on
+  # cell_ping_time, not ping_time, so the default would not find a coordinate to
+  # slice. Declared inside the dive chain so it fans out per window like the
+  # steps above it.
+  - id: select_cell_window
+    op: select_ping_time_range
+    map_over: ${plan_dives.windows}
+    inputs:
+      ds_Sv: ${merge_survey_cell_stats.merged}
+    params:
+      window: ${_item}
+      dim: "cell_ping_time"
+
+  # Comparable because every window came off one survey-wide grid. Not
+  # disjoint: see OVERLAPPING DIVES in the header. The shared minutes are the
+  # same cells cut from the same store twice, so "first" keeps one copy and
+  # sorts, and the pooled clustering counts each cell once. Nothing
+  # dive-specific is on this axis to lose.
+  - id: merge_dive_mvbs
+    op: merge_datasets
+    collect: ${apply_mask.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${apply_mask.ds_Sv}
     params:
       dim: "ping_time"
+      on_duplicate: "first"
 
-  # ds_Sv_source is required, not decorative: plot_sv_echogram raises on an
-  # MVBS dataset without it, because ping_min and ping_max index the original
-  # Sv ping axis and it is what converts them onto the MVBS grid.
-  - id: plot_window_mvbs
-    op: plot_sv_echogram
-    regenerate: if-missing
+  - id: merge_dive_cell_stats
+    op: merge_datasets
+    collect: ${select_cell_window.ds_Sv}
+    checkpoint: always
     inputs:
-      ds_Sv: ${merge_dive_mvbs.merged}
-      ds_Sv_source: ${merge_window_sv.merged}
+      datasets: ${select_cell_window.ds_Sv}
     params:
-      min_depth: 0
-      # Bin index, not elapsed seconds. See the header: on a clock-time axis
-      # the 38 days between the first and last dive squeeze all 13 into a
-      # hairline.
-      x_axis_units: "bins"
-      y_axis_units: "meters"
-      overlay_lines:
-        - var: "dive_fit"
-          style:
-            color: "red"
-            linewidth: 3.5
-        - var: "dive_u99"
-          style:
-            color: "red"
-            linewidth: 1.0
-            linestyle: "--"
-        - var: "dive_l99"
-          style:
-            color: "red"
-            linewidth: 1.0
-            linestyle: "--"
+      dim: "cell_ping_time"
+      on_duplicate: "first"
 
+  # --- Machine learning over the pooled cells -----------------------------
 
   - id: reshape_ml
     op: reshape_for_ml
@@ -411,8 +470,10 @@ steps:
       # Same reason as plot_window_mvbs, and it matters more here: this op
       # defaults to "datetime", which would draw the whole 38-day span.
       x_axis_units: "bins"
-      overlay_line_var: "dive_fit"
       cluster_stats_sv_data_var: "Sv"
+      # Per-dive profile and 99% bounds, each dive its own segment. See
+      # OVERLAPPING DIVES for why these are not attached upstream.
+      overlay_windows: ${plan_dives.windows}
 
   # --- SVCodes and the report tables --------------------------------------
 
@@ -425,6 +486,10 @@ steps:
   # interpreted from: each row carries its cell 18 and 38 kHz Sv next to its
   # code, so grouping by code gives the per-cluster statistics that say what
   # each id actually is.
+  #
+  # The dive lines are read here, per dive, onto that dive's slice of the
+  # merged grid, from the dive_fit_evl / dive_u99_evl / dive_l99_evl paths on
+  # its window. See OVERLAPPING DIVES for why they are not attached upstream.
   - id: generate_sv_codes
     op: custom
     checkpoint: always
@@ -441,7 +506,7 @@ steps:
       description: Write per-dive SVCode CSVs from the embedded clustering.
       callable_path: aa_si_utils.dive_profiles.generate_sv_codes
       cache_key: dive_profiles_generate_sv_codes
-      version: "1"
+      version: "2"
       inputs:
         ds: {type: Dataset}
       params:

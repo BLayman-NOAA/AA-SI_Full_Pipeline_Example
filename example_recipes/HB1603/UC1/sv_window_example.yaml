@@ -1,16 +1,20 @@
 # Branching off the per-file Sv cache - a worked example
 #
-# Proves the thing full_analysis_revised.yaml's restructure is supposed to buy:
+# Proves the thing full_analysis.yaml's restructure is supposed to buy:
 # that moving the fan-in below MVBS does not cut users off from the Sv. This
 # recipe computes no Sv of its own. It reuses the per-file checkpoints the
-# survey run already wrote, takes a time window out of them, and branches.
+# survey run already wrote, takes a time window out of them, grids each file
+# on its own terms, and fans in only what the window touched.
 #
 #   [cached]   read_raw -> ... -> crop_survey_range     (3322 cache hits)
-#   [new]      window_sv  (per file, drops the misses)
-#   [fan-in]   merge_window_sv -> the window's Sv
-#   [analysis] your own MVBS, at your own bin sizes
+#   [new]      window_sv     per file: the window's pings, or nothing
+#   [new]      window_mvbs   per file: YOUR bins, on the files that survived
+#   [fan-in]   merge_window_mvbs -> the window on your grid
 #
-#   aa-recipe run sv_window_example.yaml --executor dask --dask-workers 4
+#   aa-recipe run sv_window_example.yaml --executor dask --dask-workers 16
+#
+# No --cache-write-tier survey: this is an analysis, it reads the shared tier
+# and writes its own results to the user tier.
 #
 # HOW THE CACHE IS REACHED, AND THE TWO WAYS TO LOSE IT
 #
@@ -23,20 +27,54 @@
 #   1. DO NOT narrow the catalogue query to get a subset. query_ncei is a parent
 #      of the whole chain; narrowing file_time_start changes every per-file hash
 #      and you recompute the survey from raw. Measured, not assumed: all seven
-#      chain steps change. survey_preprocess.yaml's header claims a sliced run
-#      and a whole-cruise run share per-file checkpoints - that half of it is
-#      wrong. Map the whole cruise and select AFTER the fan-out, which is what
-#      window_sv below does.
+#      chain steps change. Map the whole cruise and select AFTER the fan-out,
+#      which is what window_sv below does.
 #
 #   2. DO NOT edit sub_recipes/survey_sv_per_file.yaml or change what this
 #      recipe passes into it. The include below is byte-identical to the one in
-#      full_analysis_revised.yaml, down to the input values, because a step
+#      full_analysis.yaml, down to the input values, because a step
 #      fingerprint folds in the pipeline inputs it references. That identity is
-#      the whole mechanism.
+#      the whole mechanism, and it is checked: all twelve steps above
+#      crop_survey_range hash identically in the two recipes.
 #
-#   Mapping over all 3322 files is not free even when every one is a hit: the
-#   loads measured 1378s wall at 16 workers. It is two orders of magnitude
-#   cheaper than the 43,500 CPU-seconds of the chain above it.
+# WHAT A RUN COSTS
+#
+#   The chain still visits all 3322 files, but a visited file is cheap. The six
+#   members above crop_survey_range are skipped outright, since nothing that
+#   still has to run reads them. crop_survey_range is loaded once per file, in
+#   the worker, because window_sv reads it there; the client does not load it
+#   again to fold the chain, since nothing outside the chain reads it. Then
+#   window_sv slices, and for the ~3300 files outside the window that is the
+#   end of it: they are EMPTY INSTANCES, and window_mvbs is never invoked for
+#   them. The first run of a new window is dominated by those 3322 loads;
+#   a second run of the same window prunes the whole chain behind the fan-in's
+#   checkpoint and takes seconds.
+#
+# EMPTY INSTANCES
+#
+#   select_ping_time_range with allow_empty returns None for a file the window
+#   does not touch. Nothing downstream can run on None, so the chain treats
+#   every later member that reads it as empty for that file too: no call, None
+#   outputs, no checkpoint. merge_datasets drops them when it collects. That is
+#   what lets per-file steps sit between the slice and the fan-in. Add masks or
+#   noise removal between window_sv and window_mvbs exactly as survey_mvbs.yaml
+#   does, and they inherit the same behaviour.
+#
+# WHY THE GRID IS PER FILE, NOT AFTER THE MERGE
+#
+#   Concatenating raw per-file Sv on ping_time silently NaN-pads any mismatch
+#   in range_sample, and HB1603 has 17 distinct lengths. Within one dive's files
+#   they usually agree, but a window is a time range, not a promise about
+#   sampling, and the failure is silent: echo_range comes back with NaN in it
+#   and every downstream binning reads that. So this recipe never merges raw
+#   Sv. It grids each file to your pinned depth axis first, where the file's
+#   own range_sample stops mattering, and merges the grids. That is the same
+#   correctness argument survey_mvbs.yaml makes, applied to your bins.
+#
+#   The fan-in uses on_duplicate: "mean" for the same reason the survey tier
+#   does: compute_mvbs anchors its time bins to a global origin, so a file
+#   boundary inside a bin makes both files emit it, each holding part of its
+#   pings. Averaged in the linear domain, unweighted.
 #
 # WHY window_sv IS DECLARED WHERE IT IS
 #
@@ -46,35 +84,17 @@
 #   chain - and a split chain's members stop sharing an element context, so
 #   ${crop_survey_range.ds_Sv} would resolve to the whole 3322-item list instead
 #   of this file's Sv.
-#
-# allow_empty IS WHAT MAKES THE FAN-OUT SURVIVABLE
-#
-#   The window touches a handful of files; the other ~3300 select no pings. With
-#   allow_empty false (the default, and right for a single merged store) each of
-#   those is a hard error. With it set they return nothing, and merge_datasets
-#   drops empty instances when it collects, so the fan-in keeps exactly the files
-#   the window covers.
-#
-# ONE THING TO CHECK BEFORE TRUSTING THE MERGE
-#
-#   merge_window_sv concatenates on ping_time, which still requires the files it
-#   keeps to share a range_sample length. Across the whole cruise they do not -
-#   HB1603 has 17 distinct lengths, which is why the survey tier grids before it
-#   fans in. Within one dive's few contiguous files they usually do, but it is
-#   worth confirming rather than assuming: if echo_range comes back with NaN in
-#   it, the window spans a sample-interval change and this recipe needs the same
-#   per-file gridding the survey tier uses.
 
 recipe:
   name: "hb1603_sv_window_example"
-  description: "Take a time window out of the cached per-file Sv and branch, without recomputing Sv."
-  version: "1.0"
+  description: "Take a time window out of the cached per-file Sv and grid it your own way, without recomputing Sv."
+  version: "1.1"
   author: "<Your Name>"
   schema_version: "1"
 
 inputs:
 
-  # --- These three MUST match full_analysis_revised.yaml exactly -----------
+  # --- These three MUST match full_analysis.yaml exactly -----------
   #
   # They are the inputs the cached chain references, so a different value here
   # is a different fingerprint and a full recompute. Changing one is a decision
@@ -120,7 +140,10 @@ inputs:
   range_var_max:
     type: str
     default: "1810m"
-    description: "Pinned for the same reason the survey tier pins it."
+    description: >
+      Pinned for the same reason the survey tier pins it: every file gets the
+      same depth axis, so the fan-in has nothing to pad, and the step stays
+      lazy. Must clear the deepest depth the crop can produce.
 
 steps:
 
@@ -155,46 +178,37 @@ steps:
       end: ${inputs.window_end}
       allow_empty: true
 
-  - id: merge_window_sv
-    op: merge_datasets
-    collect: ${window_sv.ds_Sv}
-    checkpoint: always
-    inputs:
-      datasets: ${window_sv.ds_Sv}
-    params:
-      dim: "ping_time"
-
-  # --- Branch out from here ------------------------------------------------
-
-  # Your own grid, at your own resolution, on Sv you did not pay to compute.
-  # This is the step the restructure was meant to keep possible: the survey
-  # store is gridded at 2m/10s, and nothing about that constrains this.
+  # Your own grid, at your own resolution, per file, on Sv you did not pay to
+  # compute. Empty instances from window_sv pass straight through. Not
+  # checkpointed either: the fan-in below is the durable product.
   - id: window_mvbs
     op: compute_mvbs
-    checkpoint: always
+    map_over: ${query_ncei.raw_urls}
     inputs:
-      ds_Sv: ${merge_window_sv.merged}
+      ds_Sv: ${window_sv.ds_Sv}
     params:
       range_bin: ${inputs.range_bin}
       ping_time_bin: ${inputs.ping_time_bin}
       range_var: "depth"
       range_var_max: ${inputs.range_var_max}
 
-  - id: plot_window
-    op: plot_sv_echogram
-    regenerate: if-missing
+  # Collects only the files the window touched; the empties are dropped here.
+  - id: merge_window_mvbs
+    op: merge_datasets
+    collect: ${window_mvbs.ds_MVBS}
+    checkpoint: always
     inputs:
-      ds_Sv: ${window_mvbs.ds_MVBS}
-      ds_Sv_source: ${merge_window_sv.merged}
+      datasets: ${window_mvbs.ds_MVBS}
     params:
-      min_depth: 0
-      x_axis_units: "bins"
-      y_axis_units: "meters"
+      dim: "ping_time"
+      on_duplicate: "mean"
+
+  # --- Branch out from here ------------------------------------------------
+  #
+  # merge_window_mvbs.merged is the window on your grid. Anything in
+  # full_analysis.yaml's user tier reads a store of exactly this shape.
 
 outputs:
-  window_sv:
-    step_id: merge_window_sv
-    output_name: merged
   window_mvbs:
-    step_id: window_mvbs
-    output_name: ds_MVBS
+    step_id: merge_window_mvbs
+    output_name: merged

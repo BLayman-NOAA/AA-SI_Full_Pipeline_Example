@@ -1,40 +1,48 @@
-# HB1603 Survey Preprocess - build the shared Sv store, and nothing else
+# HB1603 Survey Preprocess - build the shared survey store, and nothing else
 #
 # The expensive pass, run once for the cruise. It exists as its own entrypoint
-# so the survey can be built, interrupted and resumed without an analysis
-# recipe attached, and so the artifact can be written to the shared survey
-# cache tier by someone curating it rather than by every analyst.
+# so the shared tier can be built and curated by one person, deliberately,
+# rather than written by every analyst's run.
 #
-# It is exactly the two sub-recipes dive_profiles.yaml includes, with the same
-# inputs. That is the point: run this, then run the analysis, and every step
-# here is a cache hit there.
+#   [per file]  read_raw -> ... -> crop_survey_range            (the Sv)
+#   [per file]  masks -> noise -> mask_sparse -> compute_mvbs   (the grid)
+#   [fan-in]    merge_survey_mvbs -> rechunk_survey_mvbs        (the store)
+#               merge_survey_cell_stats
 #
-# Run it:
-#   aa-recipe run survey_preprocess.yaml --executor dask --dask-workers 6
+# It is exactly the survey tier full_analysis.yaml includes, with the same
+# inputs. That is the point: run this, then run the analysis, and every survey
+# step there is a cache hit. The identity is checked by a test.
 #
 # Curate it into the shared tier (reads and writes the survey tier only):
-#   aa-recipe run survey_preprocess.yaml --cache-write-tier survey \
-#       --survey-cache-dir gs://.../survey_cache
+#   aa-recipe run survey_preprocess.yaml --executor dask --dask-workers 16 \
+#       --cache-write-tier survey
 #
-# SCALE
+# survey_cache_dir comes from aa-recipe.config.yaml.
 #
-#   HB1603 is 3322 files and roughly 175 GB of raw. A DAG with that many
-#   mapped instances is untested, so prefer running it in slices - a month, a
-#   week, a day - by narrowing file_time_start / file_time_end. Instance hashes
-#   are content-addressed on each file's URL, so a sliced run and a whole-cruise
-#   run produce the same per-file checkpoints and the analysis recipe finds
-#   them either way.
+# SCALE, INTERRUPTION AND RESUMPTION
 #
-#   The one thing a slice does NOT share is the fan-in: merge_survey_sv and
-#   rechunk_survey_sv hash over the whole collected set, so the merged store is
-#   only complete once a run covers the whole window. Slice the per-file work,
-#   then do one final full-window run to assemble it, which will hit every
-#   per-file checkpoint and only pay for the merge.
+#   HB1603 is 3322 files and roughly 175 GB of raw. Run it whole. Do NOT slice
+#   it by narrowing file_time_start / file_time_end: query_ncei is a parent of
+#   every step here, so a narrowed query moves every hash beneath it and its
+#   per-file checkpoints are not the ones the whole-cruise run, or any
+#   analysis, will look for.
+#
+#   An interrupted run is cheap to resume instead. The chain resumes each file
+#   from its latest checkpoint: a file whose survey_file_mvbs and
+#   survey_cell_stats exist is two checkpoint loads and nothing else, and a
+#   file that got as far as crop_survey_range restarts from there rather than
+#   from raw. Once the two fan-ins have been written, a rerun prunes the whole
+#   chain without dispatching a single file.
+#
+#   The one-time cost after the per-file work is the fan-in itself: the client
+#   loads each per-file MVBS and cell-stats checkpoint to concatenate them,
+#   which on this cruise is about an hour of sequential bucket reads. It is
+#   paid again only when a survey-level checkpoint is invalidated.
 
 recipe:
   name: "hb1603_survey_preprocess"
-  description: "Build the shared HB1603 Sv store from NCEI, calibration included."
-  version: "1.0"
+  description: "Build the shared HB1603 survey store from NCEI: per-file Sv, one pinned depth grid, calibration included."
+  version: "2.0"
   author: "<Your Name>"
   schema_version: "1"
 
@@ -50,11 +58,21 @@ inputs:
   crop_max_range_m:
     type: float
     default: 1800.0
-    description: "Fixed range ceiling. Must match dive_profiles.yaml exactly."
+    description: "Fixed range ceiling. Must match full_analysis.yaml exactly."
+  mvbs_range_var_max:
+    type: str
+    default: "1810m"
+    description: >
+      Depth the per-file grid is built out to, as the unit string echopype
+      parses. Pinned rather than measured, so every file shares one depth axis
+      and the fan-in has nothing to pad. Must clear the deepest depth the crop
+      can produce: the crop is on echo_range and depth adds the transducer's
+      own depth on top, so an 1800 m ceiling reaches about 1809 m and 1810 m
+      is the next 2 m bin edge. Must match full_analysis.yaml exactly.
   survey_chunk_ping_time:
     type: int
     default: 1000
-    description: "Ping-time chunk of the shared store. Must match dive_profiles.yaml."
+    description: "Ping-time chunk of the shared store. Must match full_analysis.yaml."
 
 steps:
 
@@ -63,9 +81,23 @@ steps:
       cal_input_folder: ${inputs.cal_input_folder}
       calibration_output_dir: ${inputs.calibration_output_dir}
 
-  - include: sub_recipes/survey_sv.yaml
+  - include: sub_recipes/survey_sv_per_file.yaml
     input_overrides:
       calibration_dict: ${build_cal_mapping.calibration_dict}
       mapping_dict: ${build_cal_mapping.mapping_dict}
       crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # Must come directly after the include above and before anything non-mapped:
+  # a mapped chain is kept contiguous by declaration order.
+  - include: sub_recipes/survey_mvbs.yaml
+    input_overrides:
+      range_var_max: ${inputs.mvbs_range_var_max}
       survey_chunk_ping_time: ${inputs.survey_chunk_ping_time}
+
+outputs:
+  survey_mvbs:
+    step_id: rechunk_survey_mvbs
+    output_name: ds_Sv
+  survey_cell_stats:
+    step_id: merge_survey_cell_stats
+    output_name: merged

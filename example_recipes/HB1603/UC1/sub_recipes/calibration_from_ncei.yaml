@@ -80,13 +80,13 @@
 #
 #   It reports HB1603's two separate problems separately: 3 and 7 July as
 #   matched_under_widened_tolerance on power, and 27 to 28 June as unmatched on
-#   pulse length, which no power tolerance reaches. See survey_sv.yaml.
+#   pulse length, which no power tolerance reaches. See survey_sv_per_file.yaml.
 #
 #   unmapped_channels is deliberately NOT passed to build_cal_mapping here.
 #   The step would only use it to say "fell back" instead of "the consuming
 #   step decides", and params are fingerprinted: adding one changes this step's
 #   hash and every descendant's, which is the whole survey Sv. The report is
-#   written either way, and survey_sv.yaml leaves the setting at "warn".
+#   written either way, and survey_sv_per_file.yaml leaves the setting at "warn".
 #
 # INCLUDE THIS BYTE-IDENTICALLY
 #

@@ -1,7 +1,7 @@
 # Run configuration for the HB1603 dive-profile workflow.
 #
 # Picked up automatically by any recipe in this folder, so
-# survey_preprocess.yaml and dive_profiles.yaml share one cache and one set of
+# survey_preprocess.yaml and full_analysis.yaml share one cache and one set of
 # outputs. That sharing is the point: it is what makes the survey tier a cache
 # hit in the analysis run.
 #

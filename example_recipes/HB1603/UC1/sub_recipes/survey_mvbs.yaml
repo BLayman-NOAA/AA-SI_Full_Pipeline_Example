@@ -32,8 +32,8 @@
 #   Masking and noise removal have to precede binning, so moving MVBS above the
 #   survey line drags them with it. That is a real loss of flexibility: every
 #   analysis reading this store now inherits one depth bin, one ping bin, one
-#   noise-removal setting and one sparsity threshold. survey_sv.yaml kept these
-#   below the line precisely so an analysis could vary them.
+#   noise-removal setting and one sparsity threshold. The original design kept
+#   these below the survey line precisely so an analysis could vary them.
 #
 #   The trade is deliberate. An analysis needing different settings can still
 #   map its own chain over the per-file Sv (see sv_window_example.yaml), which

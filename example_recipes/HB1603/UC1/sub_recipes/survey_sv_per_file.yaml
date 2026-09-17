@@ -22,13 +22,15 @@
 #   before it fans in. survey_mvbs.yaml is one such consumer; a user recipe
 #   selecting its own window is another.
 #
-# THE STEPS BELOW ARE BYTE-IDENTICAL TO survey_sv.yaml
+# THE STEPS BELOW ARE FROZEN
 #
 #   A step's fingerprint folds in its wiring, params and parents, not the file
 #   it was declared in, so every recipe including this file addresses the same
-#   per-file checkpoints. That is what lets a new analysis reuse Sv it did not
-#   compute. Editing anything here invalidates the whole survey tier, so treat
-#   these steps as frozen and put new work in the recipe that includes them.
+#   per-file checkpoints: survey_preprocess.yaml, full_analysis.yaml and
+#   sv_window_example.yaml all hit the 3322 crop_survey_range entries one
+#   survey run wrote. That is what lets a new analysis reuse Sv it did not
+#   compute. Editing anything here invalidates the whole survey tier, so put
+#   new work in the recipe that includes this file.
 #
 #   Instances are content-addressed on the raw file URL with no ordinal index,
 #   so list position does not matter. The catalogue query DOES: query_ncei is a
