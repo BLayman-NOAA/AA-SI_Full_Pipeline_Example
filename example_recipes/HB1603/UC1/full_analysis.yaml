@@ -434,7 +434,10 @@ steps:
   #
   # checkpoint: never because it needs the fitted model, which only the
   # run_hdbscan above it holds: a checkpointed clustering result drops the
-  # model, and the model itself would checkpoint as pickle.
+  # model, and the model itself would checkpoint as pickle. Nothing needs it
+  # after embed_results, which is checkpointed: the report and the code tables
+  # both read the embedded labels from there, so a rerun of either loads that
+  # one checkpoint and never revisits the fit.
   - id: label_all_points
     op: assign_clusters_to_all_points
     checkpoint: never
@@ -456,13 +459,16 @@ steps:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
 
+  # Reads the embedded labels from the embed_results checkpoint and nothing
+  # from the clustering steps, so regenerating it does not refit. The one
+  # panel that needs the fitted model, the HDBSCAN hierarchy, is skipped; wire
+  # clustering_results and clustering_model from label_all_points to get it
+  # back at the price of rerunning the fit.
   - id: plot_clustering_report
     op: plot_clustering_report
     regenerate: if-missing
     inputs:
       ds_normalized: ${embed_results.ds_normalized}
-      clustering_results: ${label_all_points.clustering_results}
-      clustering_model: ${label_all_points.clustering_model}
       ds_Sv: ${merge_dive_mvbs.merged}
     params:
       dataset_name: "ml_dataset"
@@ -470,6 +476,11 @@ steps:
       # Same reason as plot_window_mvbs, and it matters more here: this op
       # defaults to "datetime", which would draw the whole 38-day span.
       x_axis_units: "bins"
+      # About 1300 bins against 1500 m of depth is a near-square data aspect,
+      # which the automatic rule turns into a panel taller than it is wide.
+      # Pin a 16:9 panel instead so the figure fits a screen.
+      y_to_x_aspect_ratio_override: 1.78
+      plot_window: [0, 1500] 
       cluster_stats_sv_data_var: "Sv"
       # Per-dive profile and 99% bounds, each dive its own segment. See
       # OVERLAPPING DIVES for why these are not attached upstream.
