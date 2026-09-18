@@ -99,7 +99,7 @@ inputs:
       reaches roughly 1809 m of depth.
   nan_threshold:
     type: float
-    default: 0.6
+    default: .99
     description: "Fraction of a bin that may be NaN before the bin is dropped."
   survey_chunk_ping_time:
     type: int

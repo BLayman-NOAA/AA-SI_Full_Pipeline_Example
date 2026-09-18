@@ -1,0 +1,748 @@
+# HB1603 Full Dive-Profile Analysis, seabed masked on Sv - 13 dives
+#
+# The same investigation as full_analysis.yaml, differing in one thing: the
+# seabed is masked on full-resolution Sv, per dive window, BEFORE noise
+# removal and gridding, instead of on the gridded product afterwards. From the
+# pooled machine learning down the two recipes are identical, so their outputs
+# can be compared directly. full_analysis.yaml stays as the working reference;
+# this is the experiment.
+#
+#   survey tier   calibration and per-file Sv, cropped, from the shared cache
+#                 (byte-identical include, every step a cache hit)
+#   plan          read the dive configs, keep the 13 named below
+#   dive chain    per file, only the pings inside a dive window:
+#                 surface + frequency + SEABED masks -> noise removal
+#                 -> sparse-bin mask -> grid onto the pinned depth axis
+#                 -> per-cell CV; then fan in           [this recipe's own]
+#   user tier     one slice per dive off the pooled grid, fanned in
+#   ML, report    identical to full_analysis.yaml
+#
+#   aa-recipe run full_analysis_seabed_sv_mask.yaml --executor dask --dask-workers 16
+#
+# WHERE THIS BRANCHES OFF THE CACHE
+#
+#   At crop_survey_range: the per-file, range-cropped Sv the survey run
+#   checkpointed. That is the deepest step below which nothing is
+#   checkpointed - the surface and frequency masks, the noise removal and the
+#   sparse-bin mask live on the way to the grid and are never written - so
+#   they are all re-applied here. They are lazy and cheap; the cost that
+#   matters, computing Sv for 3322 files, is the cache hit.
+#
+#   The two includes below are byte-identical to full_analysis.yaml's, down to
+#   the input values, because a step fingerprint folds in the pipeline inputs
+#   it references. Do not narrow the catalogue query and do not touch the
+#   include blocks; sv_window_example.yaml's header explains both traps.
+#
+# HOW A DIVE CHAIN RUNS OVER A WHOLE SURVEY
+#
+#   dive_sv is mapped over every catalogue file and keeps, per file, the pings
+#   inside any of the 13 windows (select_ping_time_range's ``windows`` form,
+#   one pass per file). For the roughly 3280 files no window touches it
+#   returns nothing, and every step below it is skipped for that file without
+#   being invoked; the fan-in drops them. So the chain is declared over 3322
+#   files and does real work on about 40.
+#
+#   Ordering matters here as in every mapped chain: nothing may be declared
+#   between the survey_sv_per_file include and dive_sv, or the two halves stop
+#   sharing an element context. plan_dives depends only on inputs, so it is
+#   declared first, ahead of the includes, to keep out of the way.
+#
+# WHY THE SEABED IS MASKED HERE AND NOT IN THE SURVEY TIER
+#
+#   remove_background_noise estimates the floor by taking a minimum over
+#   range, so what sits BELOW the seabed feeds it. Six of the 13 dives have
+#   the seabed inside the 1800 m crop, as shallow as 1333 m (OE54, OE61,
+#   OE62, OE64 on 25 July; OE03 and OE44 on 14 August), so in full_analysis
+#   the noise estimate for those files is built with sub-seabed samples
+#   present. Masking first removes that dependence, and it also makes the
+#   per-cell CV seabed-masked, which the gridded-mask design cannot.
+#
+#   It cannot go in the shared survey tier with the data at hand. The seabed
+#   lines cover 6.0 of the cruise's 43 days - the six dive dates and nothing
+#   else - and a ping with no line depth compares False against every sample,
+#   so the mask deletes the whole ping. Silently: no error, a complete store,
+#   mostly NaN. Restricting the chain to the dive windows keeps every masked
+#   ping inside line coverage, and seabed_min_coverage turns any gap into a
+#   failed step rather than a missing dive.
+#
+# THE SEABED LINE SOURCE
+#
+#   The mask reads seabed_lines_dir, the folder, not the per-dive seabed_evl
+#   path the window carries. A per-file instance cannot read a field out of
+#   the window dict, and the per-dive path resolves to one of these same
+#   half-day files anyway, so nothing is lost. Each instance concatenates all
+#   14 exports (90k points) and interpolates onto its own pings; measured on
+#   a 25 July file this gives 100% coverage and an exact ping_time match.
+#
+#   One caveat. The 7 July export holds nine points across twelve hours, and
+#   with max_gap_s unset the reader interpolates a flat 2985 m across them.
+#   That line is drawn, not measured. It is harmless here because 2985 m is
+#   below the crop, so the mask keeps everything on 7 July, which is also the
+#   truth: those dives are over the abyssal plain.
+#
+# OVERLAPPING DIVES
+#
+#   OE29/OE32 on 7 July share ten minutes and OE61/OE62/OE64 on 25 July share
+#   eleven to fourteen minutes each. The union select keeps each shared ping
+#   once per file, so the pooled grid is built without duplicates. The user
+#   tier below still slices per dive and fans back in with on_duplicate
+#   "first", exactly as full_analysis does: it costs nothing, keeps the
+#   downstream identical, and fails loudly if a window selects no pings,
+#   which the union select alone would not.
+#
+#   A dive's lines still cannot ride on the merged dataset (two whales, one
+#   ping, one variable), so generate_sv_codes and the report read each dive's
+#   lines onto its own slice from the paths on its window, as before.
+#
+# TWO THINGS TO KEEP IN MIND WHEN COMPARING
+#
+#   Noise removal here sees only a file's in-window pings. A file straddling a
+#   window edge contributes as few as a few dozen pings, against 516 in the
+#   survey tier. The estimate is a minimum over range bins, so its quality
+#   rests on the range axis more than on ping count, but it is a difference.
+#
+#   Two windows inside one file with a gap between them are selected as one
+#   block, so noise bins of noise_ping_num pings can span the gap. With the
+#   13 windows this happens at most once, on 7 July.
+#
+# Sanity-check the shape before a long run:
+#   aa-recipe dry-run full_analysis_seabed_sv_mask.yaml --visualize
+
+recipe:
+  name: "hb1603_full_analysis_seabed_sv_mask"
+  description: "As full_analysis, with the seabed masked on full-resolution Sv before noise removal, per dive window."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+  mvbs_range_var_max:
+    type: str
+    default: "1810m"
+    description: >
+      Depth the per-window MVBS grid is built out to, as the unit string
+      echopype parses. It is pinned rather than measured so every window shares
+      one depth axis and the fan-in has nothing to pad.
+
+      It must clear the deepest depth the survey tier can produce, which is not
+      crop_max_range_m: the crop is applied to echo_range, range from the
+      transducer, while depth adds the transducer's own depth below the surface
+      on top of it. HB1603's transducer sits about 8.9 m down, so a 1800 m
+      echo_range ceiling reaches roughly 1809 m of depth and 1810 m is the next
+      2 m bin edge above it. Raise both together, and keep the margin if you
+      move the crop: a ceiling below the data silently drops the deepest bins.
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: >
+      Must match the survey run exactly, or every per-file Sv is recomputed.
+      Keep it: the water between the deepest dive cell and this ceiling is
+      where the noise estimator finds its floor (see the header).
+  seafloor_buffer_m:
+    type: float
+    default: 10.0
+    description: >
+      Metres above the seabed line that are also masked out. Applied here to
+      full-resolution Sv, so it is exact rather than quantised to range_bin.
+  json_dir:
+    type: path
+    default: "./Auxiliary/JSON_Files"
+    description: "Folder of SWD_*.json dive configs."
+  evl_root:
+    type: path
+    default: "./Auxiliary"
+    description: "Searched recursively for the .evl files the configs name."
+  pad_minutes:
+    type: float
+    default: 0.0
+    description: "Minutes added either side of each dive's line span."
+  dive_labels:
+    type: list
+    default:
+      - "SWD_20160707-OE20"
+      - "SWD_20160707-OE29"
+      - "SWD_20160707-OE32"
+      - "SWD_20160719-OE07"
+      - "SWD_20160725-OE50"
+      - "SWD_20160725-OE54"
+      - "SWD_20160725-OE61"
+      - "SWD_20160725-OE62"
+      - "SWD_20160725-OE64"
+      - "SWD_20160802-OE16"
+      - "SWD_20160814-OE03"
+      - "SWD_20160814-OE09"
+      - "SWD_20160814-OE44"
+    description: >
+      The 13 dives in the analysis: every localized dive HB1603 recorded except
+      SWD_20160703-OE20, whose dive data is incorrect.
+
+      Spelled as the set that is included rather than the one excluded, which
+      is what plan_dive_datasets accepts and is also the more useful record. It
+      states the analysis population outright, and plan_dive_datasets raises if
+      a label names a dive no config provides, so a renamed or missing config
+      stops the run instead of quietly shrinking the study.
+
+      SWD_20160707-OE20-OE29-OE32 is absent because it is not a fourteenth
+      dive. It is a combined view of three July 7 dives that each have their
+      own config, and it carries no 99% confidence lines, so it cannot drive
+      the coding step. plan_dive_datasets skips it by default.
+  sample_size:
+    type: int
+    default: 1200000
+    description: >
+      Cap on the points HDBSCAN is fitted on. Set above the expected valid-cell
+      count so it does not bind. Read the note on min_cluster_size_fraction in
+      the header before lowering it.
+  min_cluster_size_fraction:
+    type: float
+    default: 0.01
+    description: >
+      Minimum cluster size as a fraction of the points HDBSCAN is fitted on.
+      Half the 0.02 an earlier three-dive run used, against a pooled set several times larger, so
+      the absolute floor roughly doubles.
+  min_samples:
+    type: int
+    default: 4
+  code_output_dir:
+    type: path
+    default: "./outputs/sv_codes"
+    description: "Where the per-dive CSVs and the duration tables are written."
+  depth_interval_m:
+    type: float
+    default: 200.0
+    description: "Depth bin of the duration table. 200 m matches the report."
+
+  # --- The per-dive Sv chain: the survey tier's settings, now yours ----------
+  #
+  # These mirror sub_recipes/survey_mvbs.yaml's defaults so a first run is a
+  # like-for-like comparison with full_analysis.yaml. Because this chain runs
+  # only on the dive windows, changing any of them costs minutes, not the
+  # 3322-file survey.
+
+  seabed_lines_dir:
+    type: path
+    default: "./Auxiliary/seabed_lines"
+    description: >
+      Folder of half-day Echoview seabed exports. Every per-file instance reads
+      the folder and interpolates onto its own pings; see THE SEABED LINE
+      SOURCE in the header for why the folder and not the per-dive path.
+  seabed_min_coverage:
+    type: float
+    default: 0.99
+    description: >
+      Fraction of a file's selected pings that must get a seabed depth, or the
+      step fails. This is the guard against the silent failure the header
+      describes: a ping with no line depth is masked out entirely.
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth above which samples are masked out, in metres."
+  frequencies_to_mask:
+    type: list
+    default: [70, 120, 200]
+    description: "Channel frequencies in kHz to drop before binning."
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Range samples per noise-estimation bin."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Pings per noise-estimation bin."
+  noise_snr_threshold:
+    type: str
+    default: "3.0dB"
+    description: >
+      Samples whose corrected Sv sits less than this above the noise estimate
+      are masked. The survey tier's value. The reference analysis used 6.0dB.
+  noise_background_max:
+    type: str
+    default: null
+    description: >
+      Ceiling on the noise estimate, e.g. "-160.0dB" as the reference analysis
+      used. Null leaves it unbounded, as the survey tier does.
+  range_bin:
+    type: str
+    default: "2m"
+    description: "Depth bin of the per-dive grid."
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: "Ping-time bin of the per-dive grid."
+  range_var:
+    type: str
+    default: "depth"
+    description: "Variable the bins are built on. depth keeps the grid shared across files."
+  nan_threshold:
+    type: float
+    default: .99
+    description: "Fraction of a bin that may be NaN before the bin is dropped."
+  dive_chunk_ping_time:
+    type: int
+    default: 1000
+    description: "Ping-time chunk of the pooled dive store, on the MVBS grid."
+
+steps:
+
+  # Declared first: it depends only on inputs, and anything non-mapped that
+  # lands between the survey include and dive_sv would split the per-file
+  # chain (see the header).
+  - id: plan_dives
+    op: custom
+    checkpoint: always
+    params:
+      json_dir: ${inputs.json_dir}
+      evl_root: ${inputs.evl_root}
+      pad_minutes: ${inputs.pad_minutes}
+      include_labels: ${inputs.dive_labels}
+    custom_spec:
+      description: Turn the NEFSC dive configs into recipe windows.
+      callable_path: aa_si_utils.dive_profiles.plan_dive_datasets
+      cache_key: dive_profiles_plan_dive_datasets
+      version: "1"
+      params:
+        json_dir: {type: path}
+        evl_root: {type: path}
+        pad_minutes: {type: float}
+        include_labels: {type: list}
+      outputs:
+        windows: {type: list}
+        raw_files: {type: list}
+      output_map:
+        windows: "['windows']"
+        raw_files: "['raw_files']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+
+  # --- Survey tier: per-file Sv from the shared cache ----------------------
+
+  - include: sub_recipes/calibration_from_ncei.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  # These per-file steps are frozen (see the header of that file), so every
+  # crop_survey_range checkpoint already written is a hit here.
+  - include: sub_recipes/survey_sv_per_file.yaml
+    input_overrides:
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+      crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # --- Dive chain: per file, only the pings a dive window touches -----------
+  #
+  # Must come directly after the include above and before anything non-mapped.
+  # Every step here maps over the same source as the include's chain, so it
+  # joins that chain and sees one file's Sv per instance.
+
+  - id: dive_sv
+    op: select_ping_time_range
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${crop_survey_range.ds_Sv}
+    params:
+      windows: ${plan_dives.windows}
+      allow_empty: true
+
+  - id: dive_surface_mask
+    op: create_surface_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_sv.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: dive_frequency_mask
+    op: create_frequency_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_sv.ds_Sv}
+    params:
+      frequencies_to_mask: ${inputs.frequencies_to_mask}
+
+  # The folder, read whole, onto this file's selected pings. edge_extend_s is
+  # left at 0, so a ping outside the line's span is NaN rather than held at
+  # the end depth, and seabed_min_coverage makes any such ping a failure.
+  - id: dive_seabed_line
+    op: read_seafloor_line
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_sv.ds_Sv}
+    params:
+      evl_path: ${inputs.seabed_lines_dir}
+      min_coverage: ${inputs.seabed_min_coverage}
+
+  - id: dive_seabed_mask
+    op: create_seafloor_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_sv.ds_Sv}
+      seafloor_depth: ${dive_seabed_line.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  - id: dive_combine_masks
+    op: combine_masks
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      masks:
+        - ${dive_surface_mask.mask}
+        - ${dive_frequency_mask.mask}
+        - ${dive_seabed_mask.mask}
+    params:
+      mode: "and"
+
+  - id: dive_apply_mask
+    op: apply_sv_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_sv.ds_Sv}
+      mask: ${dive_combine_masks.mask}
+
+  # Now on seabed-masked Sv: the point of this recipe.
+  - id: dive_remove_noise
+    op: remove_background_noise
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_apply_mask.ds_Sv}
+    params:
+      range_sample_num: ${inputs.noise_range_sample_num}
+      ping_num: ${inputs.noise_ping_num}
+      SNR_threshold: ${inputs.noise_snr_threshold}
+      background_noise_max: ${inputs.noise_background_max}
+
+  - id: dive_mask_sparse
+    op: mask_sparse_bins
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      nan_threshold: ${inputs.nan_threshold}
+
+  # Pinned depth axis for the same reason the survey tier pins it: every file
+  # gets the same range_sample length, so the fan-in has nothing to pad.
+  - id: dive_file_mvbs
+    op: compute_mvbs
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_mask_sparse.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.mvbs_range_var_max}
+
+  # From the same pre-sparse Sv as the survey tier, now seabed-masked too, so
+  # no cell under the seabed carries a CV.
+  - id: dive_cell_stats
+    op: compute_per_cell_statistics
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.mvbs_range_var_max}
+      statistics:
+        - cv
+      cells_only: true
+
+  # --- Fan-in: the files no window touched drop out here ---------------------
+  #
+  # Per-file BINNED products, as in the survey tier: both ops anchor their
+  # time bins to a global origin, so a file boundary inside a bin makes both
+  # files emit that bin, and averaging them is what keeps the index unique.
+
+  - id: merge_dive_files_mvbs
+    op: merge_datasets
+    collect: ${dive_file_mvbs.ds_MVBS}
+    inputs:
+      datasets: ${dive_file_mvbs.ds_MVBS}
+    params:
+      dim: "ping_time"
+      on_duplicate: "mean"
+
+  # The pooled dive store on the grid. Checkpointed: it is what this recipe
+  # adds, and everything below reads it.
+  - id: rechunk_dive_mvbs
+    op: rechunk_dataset
+    checkpoint: always
+    inputs:
+      ds_Sv: ${merge_dive_files_mvbs.merged}
+    params:
+      ping_time_chunk: ${inputs.dive_chunk_ping_time}
+
+  - id: merge_dive_files_cell_stats
+    op: merge_datasets
+    collect: ${dive_cell_stats.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${dive_cell_stats.ds_Sv}
+    params:
+      dim: "cell_ping_time"
+      on_duplicate: "mean"
+
+  # --- User tier: one slice per dive, off the pooled grid --------------------
+  #
+  # Kept from full_analysis with the seabed steps removed: the seabed is
+  # already off the Sv. allow_empty is left at its default so a window that
+  # selects no pings fails here instead of quietly dropping a dive.
+
+  - id: select_window
+    op: select_ping_time_range
+    map_over: ${plan_dives.windows}
+    inputs:
+      ds_Sv: ${rechunk_dive_mvbs.ds_Sv}
+    params:
+      window: ${_item}
+
+  - id: select_cell_window
+    op: select_ping_time_range
+    map_over: ${plan_dives.windows}
+    inputs:
+      ds_Sv: ${merge_dive_files_cell_stats.merged}
+    params:
+      window: ${_item}
+      dim: "cell_ping_time"
+
+  # Same ids as full_analysis, so everything below is the same text.
+  - id: merge_dive_mvbs
+    op: merge_datasets
+    collect: ${select_window.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${select_window.ds_Sv}
+    params:
+      dim: "ping_time"
+      on_duplicate: "first"
+
+  - id: merge_dive_cell_stats
+    op: merge_datasets
+    collect: ${select_cell_window.ds_Sv}
+    checkpoint: always
+    inputs:
+      datasets: ${select_cell_window.ds_Sv}
+    params:
+      dim: "cell_ping_time"
+      on_duplicate: "first"
+
+  # --- Machine learning over the pooled cells -----------------------------
+
+  - id: reshape_ml
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${merge_dive_mvbs.merged}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: add_aux_features
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+      ds_sv: ${merge_dive_cell_stats.merged}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - cell_cv
+
+  - id: normalize_ml
+    op: normalize_ml_data
+    checkpoint: always
+    inputs:
+      ds_ml: ${add_aux_features.ds_ml_ready}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      shift_positive: false
+
+  - id: run_hdbscan
+    op: run_hdbscan
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_results"
+      min_cluster_size_fraction: ${inputs.min_cluster_size_fraction}
+      min_samples: ${inputs.min_samples}
+      sample_size: ${inputs.sample_size}
+      cluster_selection_method: "leaf"
+      use_hdbscan: true
+      soft_membership_threshold: .1
+
+  # Kept even though sample_size is not expected to bind: it is the guard that
+  # makes that expectation safe. If the valid count does exceed the ceiling,
+  # every cell past it would otherwise stay unlabelled and come back NaN once
+  # the result is regridded, which on a pooled survey is most of the data.
+  #
+  # checkpoint: never because it needs the fitted model, which only the
+  # run_hdbscan above it holds: a checkpointed clustering result drops the
+  # model, and the model itself would checkpoint as pickle. Nothing needs it
+  # after embed_results, which is checkpointed: the report and the code tables
+  # both read the embedded labels from there, so a rerun of either loads that
+  # one checkpoint and never revisits the fit.
+  - id: label_all_points
+    op: assign_clusters_to_all_points
+    checkpoint: never
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+
+  - id: embed_results
+    op: embed_clustering_results
+    checkpoint: always
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${label_all_points.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+  # Reads the embedded labels from the embed_results checkpoint and nothing
+  # from the clustering steps, so regenerating it does not refit. The one
+  # panel that needs the fitted model, the HDBSCAN hierarchy, is skipped; wire
+  # clustering_results and clustering_model from label_all_points to get it
+  # back at the price of rerunning the fit.
+  - id: plot_clustering_report
+    op: plot_clustering_report
+    regenerate: if-missing
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+      ds_Sv: ${merge_dive_mvbs.merged}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      # Same reason as plot_window_mvbs, and it matters more here: this op
+      # defaults to "datetime", which would draw the whole 38-day span.
+      x_axis_units: "bins"
+      # About 1300 bins against 1500 m of depth is a near-square data aspect,
+      # which the automatic rule turns into a panel taller than it is wide.
+      # Pin a 16:9 panel instead so the figure fits a screen.
+      y_to_x_aspect_ratio_override: 1.78
+      plot_window: [0, 1500] 
+      cluster_stats_sv_data_var: "Sv"
+      # Per-dive profile and 99% bounds, each dive its own segment. See
+      # OVERLAPPING DIVES for why these are not attached upstream.
+      overlay_windows: ${plan_dives.windows}
+      # Each style dict is merged over the op's default, so naming just one
+      # key restyles that and leaves the others. linestyle takes matplotlib's
+      # spellings: ":" dotted, "--" dashed, "-." dash-dot, "-" solid.
+      overlay_fit_style: {color: "#23FFFF", linewidth: 3.0}
+      overlay_bound_style: {color: "#D08BFF", linewidth: 1.8, linestyle: ":"}
+
+  # --- SVCodes and the report tables --------------------------------------
+
+  # Per-cell CSVs in the reference layout, plus the per-ping summary the
+  # duration table is built from. A ping contributes its whole 10 s bin to the
+  # code that dominates the cells between its 99% confidence bounds, which is
+  # what makes the per-code minutes add up to the dive length.
+  #
+  # With no clustering report rendered, these CSVs are also where the codes are
+  # interpreted from: each row carries its cell 18 and 38 kHz Sv next to its
+  # code, so grouping by code gives the per-cluster statistics that say what
+  # each id actually is.
+  #
+  # The dive lines are read here, per dive, onto that dive's slice of the
+  # merged grid, from the dive_fit_evl / dive_u99_evl / dive_l99_evl paths on
+  # its window. See OVERLAPPING DIVES for why they are not attached upstream.
+  - id: generate_sv_codes
+    op: custom
+    checkpoint: always
+    inputs:
+      ds: ${embed_results.ds_normalized}
+    params:
+      windows: ${plan_dives.windows}
+      output_dir: ${inputs.code_output_dir}
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      range_var: "depth"
+      ping_time_bin_s: 10.0
+    custom_spec:
+      description: Write per-dive SVCode CSVs from the embedded clustering.
+      callable_path: aa_si_utils.dive_profiles.generate_sv_codes
+      cache_key: dive_profiles_generate_sv_codes
+      version: "2"
+      inputs:
+        ds: {type: Dataset}
+      params:
+        windows: {type: list}
+        output_dir:
+          type: path
+          constraints:
+            must_exist: false
+        dataset_name: {type: str}
+        ml_result_name: {type: str}
+        range_var: {type: str}
+        ping_time_bin_s: {type: float}
+      outputs:
+        code_csv_paths: {type: list}
+        summary_csv_path: {type: path}
+        dive_labels: {type: list}
+      output_map:
+        code_csv_paths: "['code_csv_paths']"
+        summary_csv_path: "['summary_csv_path']"
+        dive_labels: "['dive_labels']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
+
+  # "Percent of total dive duration the whale spent at 200 m depth intervals
+  # per code." Depth comes from the fitted dive profile, not from the cells:
+  # the question is how long the whale spent at a depth, and the code says what
+  # was around it there.
+  - id: sv_code_depth_table
+    op: custom
+    checkpoint: always
+    params:
+      summary_csv_path: ${generate_sv_codes.summary_csv_path}
+      output_dir: ${inputs.code_output_dir}
+      depth_interval_m: ${inputs.depth_interval_m}
+    custom_spec:
+      description: Percent of dive duration per depth interval per code.
+      callable_path: aa_si_utils.dive_profiles.sv_code_depth_table
+      cache_key: dive_profiles_sv_code_depth_table
+      version: "1"
+      params:
+        summary_csv_path: {type: path}
+        output_dir:
+          type: path
+          constraints:
+            must_exist: false
+        depth_interval_m: {type: float}
+      outputs:
+        per_dive_csv_path: {type: path}
+        combined_csv_path: {type: path}
+        totals_csv_path: {type: path}
+      output_map:
+        per_dive_csv_path: "['per_dive_csv_path']"
+        combined_csv_path: "['combined_csv_path']"
+        totals_csv_path: "['totals_csv_path']"
+      dependency:
+        name: aa-si-utils
+        version: ">=0.1.0"
+        source: git
+        url: https://github.com/BLayman-NOAA/AA-SI_Utils.git
