@@ -345,6 +345,10 @@ steps:
   # Every step here maps over the same source as the include's chain, so it
   # joins that chain and sees one file's Sv per instance.
 
+  # snap_to_bin widens each window to whole ping-time bins. A dive window ends
+  # wherever its profile line does, and cut there the last bin is averaged over
+  # part of its pings, or gets none and drops off the grid. select_window below
+  # still trims the binned grid to the true window.
   - id: dive_sv
     op: select_ping_time_range
     map_over: ${query_ncei.raw_urls}
@@ -353,6 +357,7 @@ steps:
     params:
       windows: ${plan_dives.windows}
       allow_empty: true
+      snap_to_bin: ${inputs.ping_time_bin}
 
   - id: dive_surface_mask
     op: create_surface_mask
@@ -573,8 +578,15 @@ steps:
       normalization_name: "normalized_flatten_mean_centered"
       shift_positive: false
 
+  # Checkpointed so the report can be handed the fitted model without refitting.
+  # The labels save as Zarr; the model is a plain object and saves as PICKLE,
+  # which ties that one artifact to this environment's hdbscan and scikit-learn
+  # versions and is refused by the shared survey tier. It belongs in the user
+  # tier. If the pickle ever fails to load, delete this step's cache entry and
+  # the fit reruns once.
   - id: run_hdbscan
     op: run_hdbscan
+    checkpoint: always
     inputs:
       ds_normalized: ${normalize_ml.ds_normalized}
     params:
@@ -593,12 +605,11 @@ steps:
   # every cell past it would otherwise stay unlabelled and come back NaN once
   # the result is regridded, which on a pooled survey is most of the data.
   #
-  # checkpoint: never because it needs the fitted model, which only the
-  # run_hdbscan above it holds: a checkpointed clustering result drops the
-  # model, and the model itself would checkpoint as pickle. Nothing needs it
-  # after embed_results, which is checkpointed: the report and the code tables
-  # both read the embedded labels from there, so a rerun of either loads that
-  # one checkpoint and never revisits the fit.
+  # checkpoint: never because nothing needs it after embed_results, which is
+  # checkpointed and holds these labels embedded in the dataset: the report
+  # and the code tables both read them from there. When it does have to rerun
+  # it is cheap, since run_hdbscan above is checkpointed and supplies the
+  # fitted model from its cache entry rather than from a new fit.
   - id: label_all_points
     op: assign_clusters_to_all_points
     checkpoint: never
@@ -620,16 +631,19 @@ steps:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
 
-  # Reads the embedded labels from the embed_results checkpoint and nothing
-  # from the clustering steps, so regenerating it does not refit. The one
-  # panel that needs the fitted model, the HDBSCAN hierarchy, is skipped; wire
-  # clustering_results and clustering_model from label_all_points to get it
-  # back at the price of rerunning the fit.
+  # The echogram and the statistics read the labels from the embed_results
+  # checkpoint, which are label_all_points' labels. clustering_results and
+  # clustering_model are here for the third panel, the HDBSCAN hierarchy: it
+  # needs the fitted model, and the result's plot_hierarchy flag to ask for it.
+  # Both come from run_hdbscan's checkpoint, so redrawing the report loads them
+  # and does not refit.
   - id: plot_clustering_report
     op: plot_clustering_report
     regenerate: if-missing
     inputs:
       ds_normalized: ${embed_results.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}
       ds_Sv: ${merge_dive_mvbs.merged}
     params:
       dataset_name: "ml_dataset"

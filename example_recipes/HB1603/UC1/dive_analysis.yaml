@@ -1,0 +1,191 @@
+# HB1603 dive analysis: 13 dives, one clustering, per-dive SVCodes.
+#
+# The user-level recipe of the survey/user split. It computes no Sv and builds
+# no calibration: levels 0 to 2a are the survey's, included so their hashes
+# match and their checkpoints load. Everything from the dive windows down is
+# this analyst's own and can be varied freely.
+#
+#   aa-recipe run dive_analysis.yaml --executor dask --dask-workers 16
+#
+#   plan              read the dive configs, one window per dive
+#   level 0 (user)    the survey's catalogue and calibration mapping, LOADED
+#   level 1, 2a       the survey's per-file Sv, a cache hit at crop_survey_range
+#   level 2b (user)   per file, inside the dive windows: surface, frequency and
+#                     seabed masks, then noise removal
+#   level 3 (user)    per file: sparse mask, grid, per-cell CV; fan in; one
+#                     slice per dive
+#   level 4           pooled HDBSCAN clustering and the clustering report
+#   level 5           per-dive SVCodes and the depth-interval tables
+#
+# WHERE THE VALUES LIVE
+#
+#   Each level file documents its own steps and inputs. Every user-level value
+#   is set in this file, on the include that uses it, so the whole analysis
+#   reads from one place. A value more than one include needs is a recipe
+#   input below; the rest are literals in input_overrides. A literal is not
+#   reachable with --input: edit it here.
+#
+#   The survey levels are the exception. A step's hash folds in how its inputs
+#   are wired, and those hashes address the shared survey cache, so their
+#   overrides stay exactly as survey_sv.yaml has them.
+#
+# MATCHED TO THE NEFSC REFERENCE ANALYSIS
+#
+#   Two level 2b settings follow the reference analysis so the SVCodes can be
+#   compared cell by cell: depth is range from the transducer
+#   (dive_depth_offset 0.0), and background noise removal uses its config's
+#   6.0dB SNR and -66dB ceiling. Sound speed and absorption are not matched;
+#   they are set in the survey's Sv.
+#
+# WHAT THIS RUN COSTS
+#
+#   Level 0 loads one checkpoint. Levels 1 and 2a are declared over all 3322
+#   catalogue files and resolve per file against the cache; level 2b keeps the
+#   pings inside a dive window and drops the roughly 3280 files that have
+#   none, so the chain does real work on about 40. If the survey has not been
+#   run, level 0 fails with "Calibration files directory not found": run
+#   survey_sv.yaml first.
+#
+# THE SURVEY LEVELS MUST STAY IN STEP WITH survey_sv.yaml
+#
+#   Same include order, same overrides, same three input values below. Do not
+#   narrow the catalogue query to get a subset: it is a parent of every
+#   per-file step, so a narrowed query addresses a different cache and
+#   recomputes the cruise from raw. The window belongs in level 2b.
+#
+# ORDER MATTERS BETWEEN LEVELS 1 AND 3
+#
+#   They are one per-file chain. Nothing non-mapped may be declared between
+#   those four includes, which is why the dive plan comes first.
+#
+# Equivalent, step for step and hash for hash, to
+# full_analysis_seabed_sv_mask.yaml, which it reorganises.
+#
+# Sanity-check the shape before a long run:
+#   aa-recipe dry-run dive_analysis.yaml --visualize
+
+recipe:
+  name: "hb1603_dive_analysis"
+  description: "Pooled HDBSCAN clustering of 13 HB1603 sperm whale dives with per-dive SVCodes, seabed masked on Sv."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+
+  # --- Survey level. Must equal survey_sv.yaml's. --------------------------
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: >
+      Range ceiling applied per file. Every consumer shares it: change it and
+      the whole survey Sv is recomputed. See processing_lvl_2_survey.yaml.
+
+  # --- Shared by levels 2b and 3 -------------------------------------------
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: >
+      Ping-time bin of the per-dive grid. Level 2b widens each dive window to
+      whole bins of this width so the first and last bins of a dive are
+      averaged over all of their pings, and level 3 grids on it.
+
+steps:
+
+  # The 13 dives in the analysis: every localized dive HB1603 recorded except
+  # SWD_20160703-OE20, whose dive data is incorrect. Listed as the set that is
+  # included, so the population is stated outright and a label no config
+  # provides stops the run instead of quietly shrinking the study.
+  # SWD_20160707-OE20-OE29-OE32 is not a fourteenth dive: it is a combined view
+  # of three dives that each have their own config, and it has no 99% lines.
+  - include: sub_recipes/dive_plan.yaml
+    input_overrides:
+      json_dir: "./Auxiliary/JSON_Files"
+      evl_root: "./Auxiliary"
+      pad_minutes: 0.0
+      dive_labels:
+        - "SWD_20160707-OE20"
+        - "SWD_20160707-OE29"
+        - "SWD_20160707-OE32"
+        - "SWD_20160719-OE07"
+        - "SWD_20160725-OE50"
+        - "SWD_20160725-OE54"
+        - "SWD_20160725-OE61"
+        - "SWD_20160725-OE62"
+        - "SWD_20160725-OE64"
+        - "SWD_20160802-OE16"
+        - "SWD_20160814-OE03"
+        - "SWD_20160814-OE09"
+        - "SWD_20160814-OE44"
+
+  # --- Survey levels: keep in step with survey_sv.yaml ---------------------
+
+  - include: sub_recipes/processing_lvl_0_user.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/processing_lvl_1_per_file.yaml
+    input_overrides:
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # --- User levels ----------------------------------------------------------
+
+  - include: sub_recipes/processing_lvl_2_user.yaml
+    input_overrides:
+      dive_windows: ${plan_dives.windows}
+      ping_time_bin: ${inputs.ping_time_bin}
+      # 0.0 makes depth equal echo_range, as the reference analysis binned it.
+      # For the survey's surface-referenced depth, wire
+      # ${compute_transducer_depth.transducer_depth} here instead.
+      dive_depth_offset: 0.0
+      surface_depth_m: 10.0
+      frequencies_to_mask: [70, 120, 200]
+      seabed_lines_dir: "./Auxiliary/seabed_lines"
+      seabed_min_coverage: 0.99
+      seafloor_buffer_m: 10.0
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+      noise_snr_threshold: "6.0dB"
+      noise_background_max: "-66dB"
+
+  - include: sub_recipes/processing_lvl_3_user.yaml
+    input_overrides:
+      dive_windows: ${plan_dives.windows}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_bin: "2m"
+      range_var: "depth"
+      nan_threshold: 0.99
+      # Pinned so every file shares one depth axis. It must clear the deepest
+      # depth the data reaches: crop_max_range_m plus the largest transducer
+      # depth, rounded up to a range_bin edge.
+      mvbs_range_var_max: "1810m"
+      dive_chunk_ping_time: 1000
+
+  - include: sub_recipes/processing_lvl_4.yaml
+    input_overrides:
+      mvbs: ${merge_dive_mvbs.merged}
+      cell_stats_sv: ${merge_dive_cell_stats.merged}
+      dive_windows: ${plan_dives.windows}
+      sample_size: 1200000
+      min_cluster_size_fraction: 0.01
+      min_samples: 4
+
+  - include: sub_recipes/processing_lvl_5_sv_codes.yaml
+    input_overrides:
+      clustered: ${embed_results.ds_normalized}
+      dive_windows: ${plan_dives.windows}
+      code_output_dir: "./outputs/sv_codes"
+      depth_interval_m: 200.0

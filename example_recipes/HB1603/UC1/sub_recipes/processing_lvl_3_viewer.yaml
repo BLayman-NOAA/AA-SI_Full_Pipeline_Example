@@ -1,0 +1,139 @@
+# Processing level 3 (viewer): sparse masking and MVBS for the whole survey.
+#
+#   [per file]  mask_sparse_bins -> compute_mvbs (pinned depth grid)
+#   [fan-in]    merge every file -> rechunk -> the survey MVBS store
+#
+# The first two steps continue the per-file chain from
+# processing_lvl_2_viewer.yaml, so include this file directly after it.
+#
+# WHY THE VIEWER IS BUILT FROM MVBS AND NOT FROM Sv
+#
+#   A pyramid needs one vertical axis for the whole survey, and HB1603 does
+#   not have one at full resolution: the cruise runs sample intervals differing
+#   by about 11x, so per-file Sv comes back with 17 different range_sample
+#   lengths and sample k is a different depth in different files. compute_mvbs
+#   assigns samples to bins by the VALUE of depth, not by index, so a coarse
+#   file and a fine file land in the same physical bins, and a pinned
+#   grid_max_depth gives every file the same axis. The fan-in then has nothing
+#   to pad and the pyramid's alignment check passes trivially.
+#
+#   On depth, not echo_range. Full-resolution Sv cannot be pyramided on depth,
+#   because heave moves each ping's first sample, but a gridded product has no
+#   such problem, and depth is what lets this store be composited with the
+#   per-dive analysis store later: the viewer refuses to layer stores whose
+#   vertical references differ.
+#
+# THE GRID IS THE ANALYSIS GRID BY DEFAULT
+#
+#   2 m by 10 s, the grid dive_analysis.yaml clusters on, so a cluster-label
+#   layer laid over this store registers cell for cell. The cost is size: about
+#   350,000 columns by 905 rows by 5 channels at level zero, roughly 6 GB
+#   before compression, most of it nodata on the high frequencies and cheap to
+#   store. A context store that only has to show where the dives sit can be far
+#   coarser: 10 m by 30 s is about a fifteenth of that. The bins do not change
+#   what the run costs, which is reading and denoising 3322 files.
+#
+# THE PER-FILE MVBS IS CHECKPOINTED
+#
+#   It is this chain's surviving per-file output, so an interrupted survey run
+#   resumes from the files it finished, and the fan-in reloads durable
+#   artifacts instead of carrying a graph rooted in deleted scratch.
+
+recipe:
+  name: "hb1603_processing_lvl_3_viewer"
+  description: "Per-file sparse masking and MVBS on a pinned depth grid, fanned in to one survey-wide store."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  range_bin:
+    type: str
+    default: "2m"
+    description: "Depth bin of the viewer grid. See the note above on matching the analysis."
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: "Ping-time bin of the viewer grid."
+  range_var:
+    type: str
+    default: "depth"
+    description: >
+      Variable the bins are built on. Leave it on depth: it is what makes the
+      grid shared across files and what a later composite with the analysis
+      store requires.
+  grid_max_depth:
+    type: str
+    default: "1810m"
+    description: >
+      Deepest value the bins cover, as the unit string echopype parses. PINNED,
+      not measured: it fixes the axis length across files and keeps the step
+      lazy. 1810m clears the deepest depth the survey's 1800 m range crop can
+      produce, since depth adds the transducer's 8.9 m on top of range. It is
+      also the fixed cutoff for a shallower picture: samples below it fall
+      outside every bin and are dropped.
+  nan_threshold:
+    type: float
+    default: .99
+    description: >
+      Fraction of a bin that may be NaN before the bin is dropped. It keeps a
+      cell averaged from one surviving noisy sample, deep on a high frequency,
+      from being drawn as a speckle.
+  viewer_chunk_ping_time:
+    type: int
+    default: 2048
+    description: >
+      Ping-time chunk of the survey MVBS store. The pyramid build reads it in
+      contiguous segments, so a few chunks per segment is the right size.
+
+steps:
+
+  - id: viewer_mask_sparse
+    op: mask_sparse_bins
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${viewer_remove_noise.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      nan_threshold: ${inputs.nan_threshold}
+
+  - id: viewer_file_mvbs
+    op: compute_mvbs
+    map_over: ${query_ncei.raw_urls}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${viewer_mask_sparse.ds_Sv}
+    params:
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_var: ${inputs.range_var}
+      range_var_max: ${inputs.grid_max_depth}
+
+  # --- Fan-in: safe because every file shares one depth axis ----------------
+
+  # compute_mvbs anchors its time bins to a global origin, so a file boundary
+  # landing inside a bin makes both files emit that bin, each holding part of
+  # its pings. Averaging them is what keeps the merged index unique. Gaps in
+  # the recording are not filled: a bin exists only where a file had pings, so
+  # the store's columns are the survey's recorded time laid end to end.
+  #
+  # Not checkpointed: it feeds the rechunk immediately below, and writing both
+  # would store the survey twice.
+  - id: merge_viewer_mvbs
+    op: merge_datasets
+    collect: ${viewer_file_mvbs.ds_MVBS}
+    inputs:
+      datasets: ${viewer_file_mvbs.ds_MVBS}
+    params:
+      dim: "ping_time"
+      on_duplicate: "mean"
+
+  - id: rechunk_viewer_mvbs
+    op: rechunk_dataset
+    checkpoint: always
+    inputs:
+      ds_Sv: ${merge_viewer_mvbs.merged}
+    params:
+      ping_time_chunk: ${inputs.viewer_chunk_ping_time}

@@ -1,0 +1,126 @@
+# Viewer pyramid: a gridded store built into EchogramGL's level-of-detail store.
+#
+#   plan_segments           ping ranges cut on the reduction's own cell boundaries
+#   build_pyramid           mapped over those ranges, one pyramid per segment
+#   survey_echogram_store   collected, concatenated per level, checkpointed
+#
+# Not a processing level: it changes no data, it re-expresses it. Level 0 of the
+# pyramid is the input as given, and level k merges 2**k columns into one by
+# averaging in linear space, so an overview of the whole survey reads a small
+# array and a close-up reads the real one.
+#
+# It takes any gridded Sv dataset, which is what lets the same file build the
+# survey context store today and a per-dive analysis store later.
+#
+# WHY THE RANGES ARE NOT ARBITRARY
+#
+#   A segment reduces to a whole number of cells at every level only when its
+#   column count is a multiple of 2**(levels-1). Cut anywhere else and one cell
+#   in the middle of the survey averages fewer columns than its neighbours,
+#   every coarse level after it is shifted, and the viewer draws the wrong
+#   water while looking entirely plausible. plan_pyramid_segments puts the
+#   cuts on that grid and leaves the remainder in the last segment, where a
+#   short final cell is what a serial build produces anyway. The segmented
+#   result is the same array as the serial one, asserted in AA-SI_EchogramGL's
+#   tests/test_ops.py.
+#
+# SIZING A SEGMENT
+#
+#   A segment is held whole while its levels are reduced. Measured on this
+#   grid, five channels by 905 depth bins, a build peaks at about six times its
+#   level-zero size: roughly 1.7 GiB for 16,384 columns. Every segment can run
+#   at once under the dask executor, so the figure that has to fit in memory is
+#   that peak times the worker count.
+#
+# WHERE THE STORE ENDS UP
+#
+#   survey_echogram_store is checkpointed, so the pyramid lands in the cache
+#   under that step's content address as one zarr group with a subgroup per
+#   level. Nothing has to be published for it to be looked at. Find
+#   pyramid.zarr under <cache>/survey_echogram_store/ and point the viewer at
+#   it, local path or gs:// URL:
+#
+#     aa-echogram validate <.../pyramid.zarr>
+#     aa-echogram serve --store <.../pyramid.zarr>
+#
+#   Serving from a bucket needs the gcs extra and application-default
+#   credentials; see AA-SI_EchogramGL/docs/GCS.md.
+#
+# NEEDS aa-si-echogram-gl IN THE RUN ENVIRONMENT
+#
+#   The three ops live in AA-SI_EchogramGL, not in the recipe manager:
+#     pip install -e <path to>/AA-SI_EchogramGL
+
+recipe:
+  name: "hb1603_viewer_pyramid"
+  description: "Build a gridded Sv store into an EchogramGL pyramid, segment-parallel."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  gridded_sv:
+    type: Dataset
+    description: >
+      Sv on one shared grid with a one dimensional vertical coordinate, such as
+      an MVBS store. Wire it to rechunk_viewer_mvbs.ds_Sv.
+  pyramid_range_var:
+    type: str
+    default: "depth"
+    description: >
+      Vertical coordinate the store's geometry is built from. depth for a
+      gridded product. Full-resolution Sv would need echo_range, because depth
+      carries heave and fails the alignment check; a grid has no heave in it.
+  pyramid_levels:
+    type: int
+    default: 8
+    description: >
+      Levels to build, halving the column axis each time. Eight reduce it by
+      128 at the coarsest, about 3000 columns for this survey at 10 s bins.
+  pyramid_segment_columns:
+    type: int
+    default: 16384
+    description: >
+      Rough segment size, rounded down onto the 2**(levels-1) grid by the
+      planner. See SIZING A SEGMENT above before raising it.
+  pyramid_aggregation:
+    type: str
+    default: "linear_mean"
+    description: >
+      How columns are merged. linear_mean averages in linear space and is right
+      for a picture of biomass. max keeps a single strong target that a mean
+      would dilute.
+
+steps:
+
+  - id: plan_segments
+    op: plan_pyramid_segments
+    inputs:
+      ds_Sv: ${inputs.gridded_sv}
+    params:
+      levels: ${inputs.pyramid_levels}
+      target_pings: ${inputs.pyramid_segment_columns}
+
+  # One pyramid per segment. The slice happens inside the op, so a mapped
+  # instance reads its own columns rather than the whole survey.
+  - id: build_pyramid
+    op: build_echogram_pyramid
+    map_over: ${plan_segments.ranges}
+    inputs:
+      ds_Sv: ${inputs.gridded_sv}
+    params:
+      ping_range: ${_item}
+      levels: ${inputs.pyramid_levels}
+      range_var: ${inputs.pyramid_range_var}
+      aggregation: ${inputs.pyramid_aggregation}
+
+  # Concatenate level k of every segment. No level is added and nothing is
+  # reduced again: each part already carries all of them.
+  - id: survey_echogram_store
+    op: merge_echogram_pyramids
+    collect: ${build_pyramid.pyramid}
+    checkpoint: always
+    inputs:
+      parts: ${build_pyramid.pyramid}
+    params:
+      dim: ping_time

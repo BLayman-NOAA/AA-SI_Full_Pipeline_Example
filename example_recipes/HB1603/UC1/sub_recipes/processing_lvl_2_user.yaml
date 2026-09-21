@@ -1,0 +1,251 @@
+# Processing level 2b (user): window selection, masking and noise removal.
+#
+#   dive_sv -> depth -> surface + frequency + SEABED masks -> apply -> remove noise
+#
+# The user half of level 2, still per file. It starts from the shared per-file
+# Sv at crop_survey_range, keeps only the pings inside a dive window, and does
+# everything an analyst varies, on full-resolution Sv, before anything is
+# binned. The seabed is masked BEFORE noise removal; that ordering is the
+# reason this recipe set exists.
+#
+# Nothing between crop_survey_range and the grid is checkpointed in the survey
+# tier, so the surface and frequency masks are applied here, not inherited.
+# They are lazy and cost seconds, and their settings are this analyst's own.
+#
+# HOW A DIVE CHAIN RUNS OVER A WHOLE SURVEY
+#
+#   dive_sv is mapped over every catalogue file and keeps, per file, the pings
+#   inside any of the 13 windows (select_ping_time_range's ``windows`` form,
+#   one pass per file). For the roughly 3280 files no window touches it
+#   returns nothing, and every step below it is skipped for that file without
+#   being invoked; the fan-in drops them. So the chain is declared over 3322
+#   files and does real work on about 40.
+#
+#   Ordering matters here as in every mapped chain: nothing may be declared
+#   between the survey_sv_per_file include and dive_sv, or the two halves stop
+#   sharing an element context. plan_dives depends only on inputs, so it is
+#   declared first, ahead of the includes, to keep out of the way.
+#
+# DEPTH IS RE-ADDED HERE
+#
+#   The survey's Sv arrives with surface-referenced depth: echo_range plus the
+#   file's transducer depth and per-ping heave. dive_depth replaces it from
+#   dive_depth_offset, so the vertical reference is this analyst's choice and
+#   the shared survey Sv is left alone. 0.0 gives depth equal to echo_range,
+#   range from the transducer, which is what the NEFSC reference analysis
+#   binned on. Wiring ${compute_transducer_depth.transducer_depth} restores the
+#   survey's depth exactly.
+#
+#   Everything vertical below follows this choice. The 10 m surface mask, the
+#   seabed mask and the level 3 grid all read depth, and the Echoview seabed
+#   and dive lines are surface referenced, so at 0.0 they sit 6 or 9 m off
+#   the data, the transducer depth HB1603 recorded on the dive dates.
+#
+# WHY THE SEABED IS MASKED HERE AND NOT IN THE SURVEY TIER
+#
+#   remove_background_noise estimates the floor by taking a minimum over
+#   range, so what sits BELOW the seabed feeds it. Six of the 13 dives have
+#   the seabed inside the 1800 m crop, as shallow as 1333 m (OE54, OE61,
+#   OE62, OE64 on 25 July; OE03 and OE44 on 14 August), so in full_analysis
+#   the noise estimate for those files is built with sub-seabed samples
+#   present. Masking first removes that dependence, and it also makes the
+#   per-cell CV seabed-masked, which the gridded-mask design cannot.
+#
+#   It cannot go in the shared survey tier with the data at hand. The seabed
+#   lines cover 6.0 of the cruise's 43 days - the six dive dates and nothing
+#   else - and a ping with no line depth compares False against every sample,
+#   so the mask deletes the whole ping. Silently: no error, a complete store,
+#   mostly NaN. Restricting the chain to the dive windows keeps every masked
+#   ping inside line coverage, and seabed_min_coverage turns any gap into a
+#   failed step rather than a missing dive.
+#
+# THE SEABED LINE SOURCE
+#
+#   The mask reads seabed_lines_dir, the folder, not the per-dive seabed_evl
+#   path the window carries. A per-file instance cannot read a field out of
+#   the window dict, and the per-dive path resolves to one of these same
+#   half-day files anyway, so nothing is lost. Each instance concatenates all
+#   14 exports (90k points) and interpolates onto its own pings; measured on
+#   a 25 July file this gives 100% coverage and an exact ping_time match.
+#
+#   One caveat. The 7 July export holds nine points across twelve hours, and
+#   with max_gap_s unset the reader interpolates a flat 2985 m across them.
+#   That line is drawn, not measured. It is harmless here because 2985 m is
+#   below the crop, so the mask keeps everything on 7 July, which is also the
+#   truth: those dives are over the abyssal plain.
+#
+# TWO THINGS TO KEEP IN MIND WHEN COMPARING
+#
+#   Noise removal here sees only a file's in-window pings. A file straddling a
+#   window edge contributes as few as a few dozen pings, against 516 in the
+#   survey tier. The estimate is a minimum over range bins, so its quality
+#   rests on the range axis more than on ping count, but it is a difference.
+#
+#   Two windows inside one file with a gap between them are selected as one
+#   block, so noise bins of noise_ping_num pings can span the gap. With the
+#   13 windows this happens at most once, on 7 July.
+
+recipe:
+  name: "hb1603_processing_lvl_2_user"
+  description: "Per file, inside the dive windows: surface, frequency and seabed masks, then noise removal."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  dive_windows:
+    type: list
+    description: >
+      Window dicts, one per dive, each with start and end. Wire it to
+      plan_dives.windows. Any list of windows works, which is what lets this
+      level serve an analysis other than the dives.
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: >
+      Ping-time bin the level 3 grid is built on. Must equal that level's
+      ping_time_bin: dive_sv widens each window to whole bins of this width so
+      the first and last bins of a dive are averaged over all of their pings.
+  dive_depth_offset:
+    type: float
+    description: >
+      Metres added to echo_range to make depth on the dive pings. 0.0 is range
+      from the transducer. Wire compute_transducer_depth.transducer_depth for
+      surface-referenced depth. See DEPTH IS RE-ADDED HERE in the header.
+  surface_depth_m:
+    type: float
+    default: 10.0
+    description: "Depth above which samples are masked out, in metres."
+  frequencies_to_mask:
+    type: list
+    default: [70, 120, 200]
+    description: "Channel frequencies in kHz to drop before binning."
+  seabed_lines_dir:
+    type: path
+    default: "./Auxiliary/seabed_lines"
+    description: >
+      Folder of half-day Echoview seabed exports. Every per-file instance reads
+      the folder and interpolates onto its own pings; see THE SEABED LINE
+      SOURCE in the header for why the folder and not the per-dive path.
+  seabed_min_coverage:
+    type: float
+    default: 0.99
+    description: >
+      Fraction of a file's selected pings that must get a seabed depth, or the
+      step fails. This is the guard against the silent failure the header
+      describes: a ping with no line depth is masked out entirely.
+  seafloor_buffer_m:
+    type: float
+    default: 10.0
+    description: >
+      Metres above the seabed line that are also masked out. Applied here to
+      full-resolution Sv, so it is exact rather than quantised to range_bin.
+  noise_range_sample_num:
+    type: int
+    default: 10
+    description: "Range samples per noise-estimation bin."
+  noise_ping_num:
+    type: int
+    default: 5
+    description: "Pings per noise-estimation bin."
+  noise_snr_threshold:
+    type: str
+    default: "3.0dB"
+    description: >
+      Samples whose corrected Sv sits less than this above the noise estimate
+      are masked. The NEFSC reference analysis config sets 6.0dB.
+  noise_background_max:
+    type: str
+    default: null
+    description: >
+      Ceiling on the noise estimate. Null leaves it unbounded. The NEFSC
+      reference analysis config sets -66dB, which never binds: the estimate is
+      taken with spreading and absorption removed and sits far below it.
+
+steps:
+
+  - id: dive_sv
+    op: select_ping_time_range
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${crop_survey_range.ds_Sv}
+    params:
+      windows: ${inputs.dive_windows}
+      allow_empty: true
+      snap_to_bin: ${inputs.ping_time_bin}
+
+  # Needs no EchoData: a constant or wired depth_offset is all add_depth reads.
+  - id: dive_depth
+    op: ep_add_depth
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_sv.ds_Sv}
+    params:
+      depth_offset: ${inputs.dive_depth_offset}
+
+  - id: dive_surface_mask
+    op: create_surface_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_depth.ds_Sv}
+    params:
+      surface_depth_m: ${inputs.surface_depth_m}
+
+  - id: dive_frequency_mask
+    op: create_frequency_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_depth.ds_Sv}
+    params:
+      frequencies_to_mask: ${inputs.frequencies_to_mask}
+
+  # The folder, read whole, onto this file's selected pings. edge_extend_s is
+  # left at 0, so a ping outside the line's span is NaN rather than held at
+  # the end depth, and seabed_min_coverage makes any such ping a failure.
+  - id: dive_seabed_line
+    op: read_seafloor_line
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_depth.ds_Sv}
+    params:
+      evl_path: ${inputs.seabed_lines_dir}
+      min_coverage: ${inputs.seabed_min_coverage}
+
+  - id: dive_seabed_mask
+    op: create_seafloor_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_depth.ds_Sv}
+      seafloor_depth: ${dive_seabed_line.seafloor_depth}
+    params:
+      seafloor_buffer_m: ${inputs.seafloor_buffer_m}
+
+  - id: dive_combine_masks
+    op: combine_masks
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      masks:
+        - ${dive_surface_mask.mask}
+        - ${dive_frequency_mask.mask}
+        - ${dive_seabed_mask.mask}
+    params:
+      mode: "and"
+
+  - id: dive_apply_mask
+    op: apply_sv_mask
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_depth.ds_Sv}
+      mask: ${dive_combine_masks.mask}
+
+  # Now on seabed-masked Sv: the point of this recipe.
+  - id: dive_remove_noise
+    op: remove_background_noise
+    map_over: ${query_ncei.raw_urls}
+    inputs:
+      ds_Sv: ${dive_apply_mask.ds_Sv}
+    params:
+      range_sample_num: ${inputs.noise_range_sample_num}
+      ping_num: ${inputs.noise_ping_num}
+      SNR_threshold: ${inputs.noise_snr_threshold}
+      background_noise_max: ${inputs.noise_background_max}

@@ -1,0 +1,120 @@
+# HB1603 survey echogram pyramid: the whole cruise, built for EchogramGL.
+#
+# Every catalogue file, all five frequencies, as one level-of-detail store the
+# WebGPU viewer can open. It computes no Sv and builds no calibration: levels 0
+# to 2a are the survey's, included so their hashes match and the per-file Sv
+# loads from the cache. Everything from the masks down is this recipe's own.
+#
+#   aa-recipe run survey_echogram_pyramid.yaml --executor dask --dask-workers 16
+#
+#   level 0 (user)     the survey's catalogue and calibration mapping, LOADED
+#   level 1, 2a        the survey's per-file Sv, a cache hit at crop_survey_range
+#   level 2b (viewer)  per file: surface mask, noise removal. No seabed mask
+#   level 3 (viewer)   per file: sparse mask, MVBS on the pinned depth grid;
+#                      fan in to one survey-wide MVBS store
+#   pyramid            plan segments, build each, merge: the viewer store
+#
+# This is the "survey context store" of the dive-profile workflow's Phase 5.4:
+# on depth, from per-file MVBS, so the per-dive analysis store can be layered
+# over it later.
+#
+# WHAT IS IN THE PICTURE, AND WHAT IS NOT MASKED
+#
+#   The seabed is left in. The seabed lines cover only the six dive dates, so a
+#   survey-wide seabed mask is not possible, and a viewer wants the bottom
+#   drawn anyway. The fixed limit below the water column is the one the shared
+#   Sv already carries, 1800 m of range; lower grid_max_depth for a shallower
+#   picture. All five frequencies are kept, and noise removal blanks each one
+#   at the range where it stops carrying signal. processing_lvl_2_viewer.yaml
+#   explains both choices.
+#
+# WHAT THIS RUN COSTS
+#
+#   The same as the survey tier's gridding pass, which is hours, not minutes:
+#   3322 cropped Sv stores read from the cache, each denoised and binned. The
+#   per-file MVBS is checkpointed, so an interrupted run resumes from the files
+#   it finished. The pyramid itself is minutes. Once it has run, every step is
+#   a cache hit and the store is simply there.
+#
+#   Changing the bins, the noise settings or the masks re-runs the per-file
+#   half. Changing only the pyramid settings re-runs only the pyramid.
+#
+#   To share the store instead of keeping it in your own tier, add
+#   --cache-write-tier survey. Every artifact here is zarr, which the shared
+#   tier accepts.
+#
+# NEEDS aa-si-echogram-gl IN THE RUN ENVIRONMENT
+#
+#   The pyramid ops live in AA-SI_EchogramGL: pip install -e it into the
+#   environment aa-recipe runs from. See sub_recipes/viewer_pyramid.yaml for
+#   where the store lands and how to serve it.
+#
+# THE SURVEY LEVELS MUST STAY IN STEP WITH survey_sv.yaml
+#
+#   Same include order, same overrides, same three input values below. Do not
+#   narrow the catalogue query to build a subset: it is a parent of every
+#   per-file step, so a narrowed query addresses a different cache and
+#   recomputes Sv from raw.
+#
+# ORDER MATTERS BETWEEN LEVELS 1 AND 3
+#
+#   They are one per-file chain. Nothing non-mapped may be declared between
+#   those four includes.
+#
+# Sanity-check the shape before a long run:
+#   aa-recipe dry-run survey_echogram_pyramid.yaml --visualize
+
+recipe:
+  name: "hb1603_survey_echogram_pyramid"
+  description: "The whole HB1603 cruise as an EchogramGL pyramid: per-file MVBS on depth, all five frequencies, seabed left in."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+
+  # --- Survey level. Must equal survey_sv.yaml's. --------------------------
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: >
+      Range ceiling applied per file. Every consumer shares it: change it and
+      the whole survey Sv is recomputed. See processing_lvl_2_survey.yaml.
+
+  # Every other input lives in the level file that uses it, and is still
+  # settable from here or with --input: includes promote them.
+
+steps:
+
+  # --- Survey levels: keep in step with survey_sv.yaml ---------------------
+
+  - include: sub_recipes/processing_lvl_0_user.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/processing_lvl_1_per_file.yaml
+    input_overrides:
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # --- Viewer levels --------------------------------------------------------
+
+  - include: sub_recipes/processing_lvl_2_viewer.yaml
+
+  - include: sub_recipes/processing_lvl_3_viewer.yaml
+
+  - include: sub_recipes/viewer_pyramid.yaml
+    input_overrides:
+      gridded_sv: ${rechunk_viewer_mvbs.ds_Sv}

@@ -1,0 +1,62 @@
+# HB1603 survey Sv: the shared artifact, levels 0 to 2a.
+#
+# The survey-level recipe of the survey/user split. It is the only recipe that
+# builds the calibration, and the only one that computes Sv from raw: one
+# checkpointed, range-cropped Sv per catalogue file, 3322 of them. Run it once
+# per cruise and curate the result into the shared tier:
+#
+#   aa-recipe run survey_sv.yaml --executor dask --dask-workers 16 --cache-write-tier survey
+#
+#   level 0 (survey)  catalogue, channel scan, calibration files and mapping
+#   level 1           per file: raw ingest, calibration parameters
+#   level 2a          per file: Sv, surface-referenced depth, range crop
+#
+# It stops there on purpose. HB1603's range_sample axis differs between files,
+# so the survey cannot be merged at full resolution, and everything past the
+# crop is an analyst's choice. dive_analysis.yaml picks up from
+# crop_survey_range.
+#
+# IF survey_preprocess.yaml HAS ALREADY BEEN RUN, THIS IS ALREADY DONE
+#
+#   Its first two includes are these same twelve steps with the same hashes, so
+#   they wrote the same cache entries. survey_preprocess.yaml goes on to build
+#   the gridded survey store that full_analysis.yaml reads; this recipe set
+#   does not use that store.
+
+recipe:
+  name: "hb1603_survey_sv"
+  description: "Per-file, range-cropped Sv for the whole HB1603 cruise, streamed from NCEI."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Manufacturer .cal files."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: >
+      Range ceiling applied per file. Every consumer shares it: change it and
+      the whole survey Sv is recomputed. See processing_lvl_2_survey.yaml.
+
+steps:
+
+  - include: sub_recipes/processing_lvl_0_survey.yaml
+    input_overrides:
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/processing_lvl_1_per_file.yaml
+    input_overrides:
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      crop_max_range_m: ${inputs.crop_max_range_m}
