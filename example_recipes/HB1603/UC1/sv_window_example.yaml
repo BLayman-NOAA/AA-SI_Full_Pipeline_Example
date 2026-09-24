@@ -184,6 +184,9 @@ steps:
   - id: window_mvbs
     op: compute_mvbs
     map_over: ${query_ncei.raw_urls}
+    # Collected by the fan-in after read_raw disposes its scratch, so it must
+    # be reloaded from a checkpoint rather than carried as a lazy graph.
+    checkpoint: always
     inputs:
       ds_Sv: ${window_sv.ds_Sv}
     params:

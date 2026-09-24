@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transducer (`dive_depth_offset: 0.0`) while the viewer is surface
   referenced, so cells coincide in time and bin size but sit about 8.9 m
   apart vertically until one side changes reference.
+- `aa-si-echogram-gl` is now a declared dependency, since the pyramid ops the
+  survey pyramid recipe uses live there.
 - Initial project structure from NOAA Fisheries AA-SI Python template
 
 ### Changed

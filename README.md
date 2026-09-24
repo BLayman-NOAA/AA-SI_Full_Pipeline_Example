@@ -88,6 +88,7 @@ These notebooks demonstrate the following AA-SI packages working together:
 - **[aa-si-ml](https://github.com/BLayman-NOAA/AA-SI_ML)** — ML-based data preprocessing and HDBSCAN clustering
 - **[aa-si-utils](https://github.com/BLayman-NOAA/AA-SI_Utils)** — Masking, seafloor removal, and general utilities
 - **[aa-si-visualization](https://github.com/BLayman-NOAA/AA-SI_Visualization)** — Echogram plotting and Sv difference visualization
+- **[aa-si-echogram-gl](https://github.com/BLayman-NOAA/AA-SI_EchogramGL)** — Level-of-detail echogram stores and the WebGPU viewer, built by the survey pyramid recipe
 
 ---
 

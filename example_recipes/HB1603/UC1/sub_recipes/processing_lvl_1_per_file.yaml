@@ -87,9 +87,12 @@ steps:
     checkpoint: never
     # Delete each file's intermediate store as soon as its instance finishes,
     # instead of letting temp_dir/data grow to one store per catalogue file.
-    # Safe because the crop step at the end of level 2a is checkpointed: the client reloads
-    # a checkpointed member from the cache when it folds the chain in, so
-    # nothing that outlives the instance is still rooted in the deleted store.
+    # Safe only while every chain member that a fan-in collects is
+    # checkpointed: the client reloads a checkpointed member from the cache when
+    # it folds the chain in, whereas an uncheckpointed member arrives as a lazy
+    # graph still rooted in the deleted store and reads back as NaN. Level 2a's
+    # crop and level 3's per-file grid and cell statistics are all checkpointed
+    # for this reason.
     dispose_outputs: [raw_stores]
     execution:
       dask_config:

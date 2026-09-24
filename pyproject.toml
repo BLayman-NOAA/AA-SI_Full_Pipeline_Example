@@ -58,7 +58,8 @@ matplotlib = ">=3.5.0"
 #               -e ../AA-SI_Utils \
 #               -e ../AA-SI_calibration \
 #               -e ../AA-SI_ML \
-#               -e ../AA-SI_Visualization
+#               -e ../AA-SI_Visualization \
+#               -e ../AA-SI_EchogramGL
 # The "gcs" extras pull in gcsfs (fsspec's gs:// driver) so the GCS-bucket
 # example recipes (processing_levels_pipeline_gcs.yaml) work out of the box;
 # credentials come from Application Default Credentials.
@@ -66,6 +67,11 @@ aa-si-calibration = {git = "https://github.com/BLayman-NOAA/AA-SI_calibration.gi
 aa-si-ml = {git = "https://github.com/BLayman-NOAA/AA-SI_ML.git"}
 aa-si-utils = {git = "https://github.com/BLayman-NOAA/AA-SI_Utils.git", extras = ["gcs"]}
 aa-si-visualization = {git = "https://github.com/BLayman-NOAA/AA-SI_Visualization.git"}
+# The EchogramGL pyramid ops (plan_pyramid_segments, build_echogram_pyramid,
+# merge_echogram_pyramids) used by HB1603/UC1/survey_echogram_pyramid.yaml.
+# EchogramGL requires Python 3.11, and this repo still allows 3.10, so the
+# marker skips it there instead of making poetry refuse to resolve.
+aa-si-echogram-gl = {git = "https://github.com/BLayman-NOAA/AA-SI_EchogramGL.git", python = ">=3.11"}
 aa-recipe-manager = {git = "https://github.com/BLayman-NOAA/AA-SI_recipe_manager.git", extras = ["gcs"]}
 
 [tool.poetry.group.dev.dependencies]

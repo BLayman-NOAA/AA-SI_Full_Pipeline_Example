@@ -442,6 +442,10 @@ steps:
   - id: dive_file_mvbs
     op: compute_mvbs
     map_over: ${query_ncei.raw_urls}
+    # dive_file_mvbs and dive_cell_stats are collected by the fan-in after
+    # read_raw disposes its scratch, so both must be reloaded from a checkpoint
+    # rather than carried as a lazy graph over deleted stores.
+    checkpoint: always
     inputs:
       ds_Sv: ${dive_mask_sparse.ds_Sv}
     params:
@@ -455,6 +459,7 @@ steps:
   - id: dive_cell_stats
     op: compute_per_cell_statistics
     map_over: ${query_ncei.raw_urls}
+    checkpoint: always
     inputs:
       ds_Sv: ${dive_remove_noise.ds_Sv}
     params:

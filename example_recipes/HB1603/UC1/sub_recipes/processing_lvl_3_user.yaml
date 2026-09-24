@@ -14,6 +14,10 @@
 # in this recipe set is already seabed-masked, so no cell under the seabed
 # carries a statistic.
 #
+# The two per-file products are checkpointed because the fan-in collects them;
+# see the note on dive_file_mvbs. It costs a few megabytes per file and makes
+# an interrupted run resume from the files it finished.
+#
 # THE FAN-IN AVERAGES
 #
 #   compute_mvbs and compute_per_cell_statistics anchor their time bins to a
@@ -104,9 +108,20 @@ steps:
 
   # Pinned depth axis for the same reason the survey tier pins it: every file
   # gets the same range_sample length, so the fan-in has nothing to pad.
+  #
+  # checkpoint: always is not optional here, and neither is it on
+  # dive_cell_stats below. They are the two chain members the fan-in collects,
+  # and an uncheckpointed member reaches the fan-in as a lazy graph rooted in
+  # the worker's scratch stores, which read_raw deletes as each instance
+  # finishes. When the per-file Sv is computed in this run rather than loaded
+  # from the survey cache, that graph then reads deleted chunks, and zarr
+  # returns its fill value for a missing chunk: every cell NaN, no error, and
+  # a clustering step downstream that fails on an empty channel list.
+  # Checkpointed, the fan-in reloads durable per-file grids instead.
   - id: dive_file_mvbs
     op: compute_mvbs
     map_over: ${inputs.per_file_source}
+    checkpoint: always
     inputs:
       ds_Sv: ${dive_mask_sparse.ds_Sv}
     params:
@@ -120,6 +135,7 @@ steps:
   - id: dive_cell_stats
     op: compute_per_cell_statistics
     map_over: ${inputs.per_file_source}
+    checkpoint: always
     inputs:
       ds_Sv: ${dive_remove_noise.ds_Sv}
     params:
