@@ -56,10 +56,10 @@ recipe:
 inputs:
   mvbs:
     type: Dataset
-    description: "MVBS on one shared grid. Wire it to merge_dive_mvbs.merged."
+    description: "MVBS on one shared grid. Wire it to rechunk_dive_mvbs.ds_Sv."
   cell_stats_sv:
     type: Dataset
-    description: "Per-cell statistics on the same grid. Wire it to merge_dive_cell_stats.merged."
+    description: "Per-cell statistics on the same grid. Wire it to merge_dive_files_cell_stats.merged."
   dive_windows:
     type: list
     description: >
@@ -82,6 +82,7 @@ inputs:
   min_samples:
     type: int
     default: 4
+    description: "HDBSCAN min_samples: how conservative the density estimate is. Larger means more points called noise."
 
 steps:
 
@@ -186,14 +187,14 @@ steps:
     params:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
-      # Same reason as plot_window_mvbs, and it matters more here: this op
-      # defaults to "datetime", which would draw the whole 38-day span.
+      # This op defaults to "datetime", which would draw the whole 38-day span
+      # with the dives as hairlines; see THE PLOTS MUST USE x_axis_units: bins.
       x_axis_units: "bins"
       # About 1300 bins against 1500 m of depth is a near-square data aspect,
       # which the automatic rule turns into a panel taller than it is wide.
       # Pin a 16:9 panel instead so the figure fits a screen.
       y_to_x_aspect_ratio_override: 1.78
-      plot_window: [0, 1500] 
+      plot_window: [0, 1500]
       cluster_stats_sv_data_var: "Sv"
       # Per-dive profile and 99% bounds, each dive its own segment. See
       # OVERLAPPING DIVES for why these are not attached upstream.

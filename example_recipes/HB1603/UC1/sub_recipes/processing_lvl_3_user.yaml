@@ -3,54 +3,56 @@
 #   [per file]  mask_sparse_bins -> compute_mvbs (pinned depth grid)
 #               compute_per_cell_statistics (from the pre-sparse Sv)
 #   [fan-in]    merge the files a dive window touched -> the pooled dive grid
-#   [per dive]  one slice per dive off the pooled grid, fanned back in
 #
 # The first three steps continue the per-file chain from level 2b, so include
-# this file directly after it. The fan-in belongs here and not at level 2
-# because range_sample is not a shared axis across HB1603: files can only be
-# merged once they are on the pinned depth grid.
+# this file directly after it and pass it the same per_file_source (see WHAT
+# THE STEPS MAP OVER in processing_lvl_1_per_file.yaml). The fan-in belongs
+# here and not at level 2 because range_sample is not a shared axis across
+# HB1603: files can only be merged once they are on the pinned depth grid.
 #
 # The per-cell CV comes off the same denoised Sv the grid is built from, which
 # in this recipe set is already seabed-masked, so no cell under the seabed
 # carries a statistic.
 #
-# THE PER-FILE FAN-IN AVERAGES, THE PER-DIVE FAN-IN TAKES THE FIRST
+# THE FAN-IN AVERAGES
 #
 #   compute_mvbs and compute_per_cell_statistics anchor their time bins to a
 #   global origin, so a file boundary landing inside a bin makes both files
 #   emit that bin, each holding part of its pings. on_duplicate "mean" is what
-#   keeps the merged index unique there. The per-dive slices are cut from one
-#   pooled store, so a duplicate between them is the same cell twice and
-#   "first" is exact.
+#   keeps the merged index unique.
 #
-# OVERLAPPING DIVES
+# THE POOLED GRID IS THE ANALYSIS SET
 #
-#   OE29/OE32 on 7 July share ten minutes and OE61/OE62/OE64 on 25 July share
-#   eleven to fourteen minutes each. The union select keeps each shared ping
-#   once per file, so the pooled grid is built without duplicates. The user
-#   tier below still slices per dive and fans back in with on_duplicate
-#   "first", exactly as full_analysis does: it costs nothing, keeps the
-#   downstream identical, and fails loudly if a window selects no pings,
-#   which the union select alone would not.
+#   Nothing slices it per dive again. dive_sv already kept, per file, exactly
+#   the pings inside a dive window and snapped to whole bins, so the merged
+#   grid holds each dive's cells once, in time order, and level 4 reads it
+#   directly. OE29/OE32 on 7 July share ten minutes and OE61/OE62/OE64 on
+#   25 July share eleven to fourteen minutes each; the union select keeps a
+#   shared ping once, so overlapping dives do not duplicate cells.
 #
-#   A dive's lines still cannot ride on the merged dataset (two whales, one
-#   ping, one variable), so generate_sv_codes and the report read each dive's
-#   lines onto its own slice from the paths on its window, as before.
+#   Per-dive work happens downstream, on slices of this grid: generate_sv_codes
+#   and the report read each dive's lines onto its own slice from the paths on
+#   its window, since two whales under one ping cannot share one line
+#   variable. A window that selects no pings is reported there, as a warning
+#   and a missing entry in dive_labels, rather than failing at this level.
 
 recipe:
   name: "hb1603_processing_lvl_3_user"
-  description: "Per-file sparse masking, MVBS on a pinned depth grid and per-cell CV, fanned in and sliced per dive."
+  description: "Per-file sparse masking, MVBS on a pinned depth grid and per-cell CV, fanned in to the pooled dive grid."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
 
 inputs:
-  dive_windows:
-    type: list
+  per_file_source:
+    type: str
     description: >
-      Window dicts, one per dive, each with start and end. Wire it to
-      plan_dives.windows. Any list of windows works, which is what lets this
-      level serve an analysis other than the dives.
+      The ${step.output} list the per-file steps map over, one instance per
+      entry. Must be overridden by the including recipe, with the same value
+      for every level that shares the chain. Normally ${query_ncei.raw_urls}:
+      the whole catalogue, or the dive files alone when that query carries
+      file_names. Substituted textually, so the fingerprinted map_over is the
+      value passed.
   range_bin:
     type: str
     default: "2m"
@@ -91,7 +93,7 @@ steps:
 
   - id: dive_mask_sparse
     op: mask_sparse_bins
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     inputs:
       ds_Sv: ${dive_remove_noise.ds_Sv}
     params:
@@ -104,7 +106,7 @@ steps:
   # gets the same range_sample length, so the fan-in has nothing to pad.
   - id: dive_file_mvbs
     op: compute_mvbs
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     inputs:
       ds_Sv: ${dive_mask_sparse.ds_Sv}
     params:
@@ -117,7 +119,7 @@ steps:
   # no cell under the seabed carries a CV.
   - id: dive_cell_stats
     op: compute_per_cell_statistics
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     inputs:
       ds_Sv: ${dive_remove_noise.ds_Sv}
     params:
@@ -138,8 +140,8 @@ steps:
       dim: "ping_time"
       on_duplicate: "mean"
 
-  # The pooled dive store on the grid. Checkpointed: it is what this recipe
-  # adds, and everything below reads it.
+  # The pooled dive grid, what this level produces. Checkpointed, and what
+  # level 4 clusters.
   - id: rechunk_dive_mvbs
     op: rechunk_dataset
     checkpoint: always
@@ -148,6 +150,7 @@ steps:
     params:
       ping_time_chunk: ${inputs.dive_chunk_ping_time}
 
+  # The matching per-cell statistics, on the cell grid's own time axis.
   - id: merge_dive_files_cell_stats
     op: merge_datasets
     collect: ${dive_cell_stats.ds_Sv}
@@ -157,41 +160,3 @@ steps:
     params:
       dim: "cell_ping_time"
       on_duplicate: "mean"
-
-  - id: select_window
-    op: select_ping_time_range
-    map_over: ${inputs.dive_windows}
-    inputs:
-      ds_Sv: ${rechunk_dive_mvbs.ds_Sv}
-    params:
-      window: ${_item}
-
-  - id: select_cell_window
-    op: select_ping_time_range
-    map_over: ${inputs.dive_windows}
-    inputs:
-      ds_Sv: ${merge_dive_files_cell_stats.merged}
-    params:
-      window: ${_item}
-      dim: "cell_ping_time"
-
-  # Same ids as full_analysis, so everything below is the same text.
-  - id: merge_dive_mvbs
-    op: merge_datasets
-    collect: ${select_window.ds_Sv}
-    checkpoint: always
-    inputs:
-      datasets: ${select_window.ds_Sv}
-    params:
-      dim: "ping_time"
-      on_duplicate: "first"
-
-  - id: merge_dive_cell_stats
-    op: merge_datasets
-    collect: ${select_cell_window.ds_Sv}
-    checkpoint: always
-    inputs:
-      datasets: ${select_cell_window.ds_Sv}
-    params:
-      dim: "cell_ping_time"
-      on_duplicate: "first"

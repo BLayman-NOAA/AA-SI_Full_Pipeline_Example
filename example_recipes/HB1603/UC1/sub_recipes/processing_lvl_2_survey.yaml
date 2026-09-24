@@ -1,6 +1,7 @@
-# Processing level 2a (survey): per-file Sv and depth, cropped. No fan-in.
+# Processing level 2a (survey): per-file calibration, Sv and depth, cropped.
 #
-#   compute_sv -> compute_transducer_depth -> ep_add_depth -> crop_range
+#   extract_cal_params -> compute_sv -> compute_transducer_depth
+#                      -> ep_add_depth -> crop_range
 #
 # The survey half of level 2, and the boundary of the shared artifact: the
 # checkpointed per-file Sv at crop_survey_range. It is computed once per
@@ -8,7 +9,6 @@
 # and picks up from crop_survey_range.
 #
 # WHY THERE IS NO SURVEY FAN-IN
-#
 #
 #   range_sample is not a shared axis across HB1603. max_range_m is a ceiling,
 #   not a fixed length, and the cruise runs sample intervals differing by about
@@ -21,12 +21,13 @@
 #
 #   So the survey cannot be merged at this level at all. What it CAN do is hand
 #   out per-file Sv, and let each consumer bin onto a shared physical grid
-#   before it fans in. processing_lvl_2_user.yaml and processing_lvl_3_user.yaml are that
-#   consumer for the dive analysis.
+#   before it fans in. processing_lvl_2_user.yaml and processing_lvl_3_user.yaml
+#   are that consumer for the dive analysis.
 #
 # THE STEPS BELOW ARE FROZEN
 #
-#   Same rule as level 1. crop_max_range_m is shared with every consumer: a
+#   Same rule as level 1, and the same per_file_source input: see WHAT THE
+#   STEPS MAP OVER there. crop_max_range_m is shared with every consumer: a
 #   different ceiling is a different fingerprint and a full recompute. Keep it
 #   generous. Nothing below about 1400 m is coded by the dive analysis, but the
 #   quiet water between the deepest dive cell and the ceiling is where the
@@ -40,6 +41,21 @@ recipe:
   schema_version: "1"
 
 inputs:
+  per_file_source:
+    type: str
+    description: >
+      The ${step.output} list the per-file steps map over, one instance per
+      entry. Must be overridden by the including recipe, with the same value
+      for every level that shares the chain. Normally ${query_ncei.raw_urls}:
+      the whole catalogue, or the dive files alone when that query carries
+      file_names. Substituted textually, so the fingerprinted map_over is the
+      value passed.
+  calibration_dict:
+    type: dict
+    description: "Standardized calibration data, from build_cal_mapping."
+  mapping_dict:
+    type: dict
+    description: "Raw channel to calibration key mapping, from build_cal_mapping."
   crop_max_range_m:
     type: float
     default: 1800.0
@@ -47,9 +63,41 @@ inputs:
 
 steps:
 
+  # Path(url).name gives the bare filename, which is the key the calibration
+  # mapping is built under, so a URL resolves the same as a local path would.
+  #
+  # unmapped_channels is left at its "warn" default, so a channel no
+  # calibration file matched falls back to the values the raw file records for
+  # it and says so on the terminal. Set it to "error" for a survey where an
+  # unmatched channel should stop the run.
+  #
+  # HB1603 needs this, but not for the transmit power difference the match
+  # tolerance in processing_lvl_0_survey.yaml now covers. It is pulse length: on
+  # the first 151 files of the cruise, 27 and 28 June, the 18 kHz channel ran
+  # at 2.048 ms and 120 and 200 kHz at 0.256 ms, against calibrations measured
+  # at 1.024 ms. 120 and 200 kHz transmit at exactly their calibrated power, so
+  # no power tolerance reaches them. Widening transmit_duration_nominal is not
+  # the answer either: pulse length sets the effective pulse duration and the
+  # equivalent beam correction, so a 2x or 4x difference is a different
+  # measurement rather than a tolerance question. Those files end on 28 June
+  # and the earliest dive is 7 July, so no dive is affected, but the merged
+  # survey Sv store does carry them on fallback calibration.
+  #
+  # mapping_files/calibration_provenance.yaml is where that is written down
+  # per channel, with the time range of each stretch and the field behind it.
+  - id: extract_cal_params
+    op: extract_standardized_cal_params
+    map_over: ${inputs.per_file_source}
+    inputs:
+      calibration_dict: ${inputs.calibration_dict}
+      mapping_dict: ${inputs.mapping_dict}
+      echodata: ${combine_raw.echodata}
+    params:
+      raw_file_path: ${_item}
+
   - id: compute_sv
     op: compute_sv
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     checkpoint: always
     inputs:
       echodata: ${combine_raw.echodata}
@@ -76,7 +124,7 @@ steps:
   # so it is carried rather than tuned.
   - id: compute_transducer_depth
     op: compute_transducer_depth
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     checkpoint: always
     inputs:
       ds_Sv: ${compute_sv.ds_Sv}
@@ -89,7 +137,7 @@ steps:
   # EchoData, which the fan-in below is the last point that still has.
   - id: ep_add_depth
     op: ep_add_depth
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     inputs:
       ds_Sv: ${compute_sv.ds_Sv}
       echodata: ${combine_raw.echodata}
@@ -105,7 +153,7 @@ steps:
   # one per file in the survey.
   - id: crop_survey_range
     op: crop_range
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     checkpoint: always
     inputs:
       ds_Sv: ${ep_add_depth.ds_Sv}

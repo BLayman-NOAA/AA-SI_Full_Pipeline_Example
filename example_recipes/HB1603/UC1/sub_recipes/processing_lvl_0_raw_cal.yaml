@@ -1,0 +1,72 @@
+# Processing level 0 (raw calibration): the catalogue, narrowed to the dive files.
+#
+#   query_ncei   the survey's catalogue query, keeping only the files the
+#                dive plan names; its raw_urls are what levels 1 to 3 map over
+#
+# The level 0 of dive_analysis_raw_cal.yaml. No manufacturer calibration files
+# are read, standardized or mapped: compute_sv takes gains and environment
+# from each raw file, as echopype does when handed nothing.
+#
+# WHY ONLY THE DIVE FILES
+#
+#   A recipe that recalibrates cannot reuse the survey's per-file Sv, so
+#   mapping the chain over the whole catalogue would compute Sv for 3322
+#   files to use 24. file_names keeps the files the dive configs name. The
+#   match is on the D{date}-T{time} stamp, so a config's bare
+#   D20160725-T205832.raw matches the archive's HB1603_L1- form as well as its
+#   own, and a dive file the catalogue does not have fails the step rather
+#   than shrinking the study.
+#
+#   The time window is left at the survey's, the whole cruise. It is not what
+#   narrows the result, the names are, and one window cannot cover six dive
+#   dates spread over 38 days without covering everything between them.
+#
+# NOT THE SURVEY'S QUERY ENTRY
+#
+#   file_names is a param, so this step's hash differs from the survey's
+#   query and it runs rather than loading: one catalogue query, seconds.
+#   Everything below it is this path's own cache in any case.
+
+recipe:
+  name: "hb1603_processing_lvl_0_raw_cal"
+  description: "The NCEI catalogue query and the dive files' URLs, with no calibration files involved."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  cruise_name:
+    type: str
+    default: "HB1603"
+    description: "CRUISE_NAME filter for the NCEI catalogue query."
+  file_time_start:
+    type: str
+    default: "2016-06-01T00:00:00"
+    description: >
+      Lower bound of the catalogue query. Deliberately wider than the cruise,
+      which runs 2016-06-27 to 2016-08-25, so the window states an intent
+      rather than a measurement and does not need editing if the catalogue
+      gains a file at either end. It must stay fixed once a scan has been
+      cached: it is a query param, so moving it re-runs every instance.
+  file_time_end:
+    type: str
+    default: "2016-09-01T00:00:00"
+    description: "Upper bound of the catalogue query. See file_time_start."
+  dive_raw_files:
+    type: list
+    description: >
+      Raw file names the dives touch. Wire it to plan_dives.raw_files. The
+      query keeps only these, so its raw_urls output is the list levels 1 to 3
+      map over.
+
+steps:
+
+  - id: query_ncei
+    op: query_ncei_data
+    checkpoint: always
+    params:
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      filters:
+        CRUISE_NAME: ${inputs.cruise_name}
+      file_names: ${inputs.dive_raw_files}

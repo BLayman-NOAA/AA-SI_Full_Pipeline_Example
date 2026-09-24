@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- HB1603 `UC1/survey_echogram_pyramid.yaml` now masks the seabed. A new
+  `sub_recipes/processing_lvl_2_viewer_seabed.yaml` adds split-beam angles to
+  the survey's `ep_add_depth` output (echopype will not attach them to a
+  cropped dataset), repeats the survey crop, picks the seabed per file with
+  `phase_detect_seafloor` (no .bot file, no Echoview line, no depth window;
+  pings whose seabed lies below the 1800 m crop are kept whole with
+  `missing: max_range`), and masks it at full-resolution Sv before noise
+  removal and before MVBS. Level 3 and the pyramid are unchanged and still
+  grid 2 m by 10 s, the dive analysis grid. The run builds on the
+  `compute_sv` and `compute_transducer_depth` checkpoints; only
+  `crop_survey_range` is not reused. The seabed-in variant
+  `processing_lvl_2_viewer.yaml` is kept. The analysis grids depth from the
+  transducer (`dive_depth_offset: 0.0`) while the viewer is surface
+  referenced, so cells coincide in time and bin size but sit about 8.9 m
+  apart vertically until one side changes reference.
 - Initial project structure from NOAA Fisheries AA-SI Python template
 
 ### Changed

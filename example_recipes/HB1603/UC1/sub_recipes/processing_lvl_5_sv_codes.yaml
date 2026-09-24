@@ -32,6 +32,13 @@ inputs:
       Window dicts, one per dive, each with start and end. Wire it to
       plan_dives.windows. Any list of windows works, which is what lets this
       level serve an analysis other than the dives.
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: >
+      The grid's ping-time bin, as level 3 takes it. Each ping contributes
+      one bin of this length to its code's duration, so it must be the value
+      level 3 gridded on. Wire both from one parent input.
   code_output_dir:
     type: path
     default: "./outputs/sv_codes"
@@ -44,14 +51,14 @@ inputs:
 steps:
 
   # Per-cell CSVs in the reference layout, plus the per-ping summary the
-  # duration table is built from. A ping contributes its whole 10 s bin to the
-  # code that dominates the cells between its 99% confidence bounds, which is
-  # what makes the per-code minutes add up to the dive length.
+  # duration table is built from. A ping contributes its whole bin, one
+  # ping_time_bin long, to the code that dominates the cells between its 99%
+  # confidence bounds, which is what makes the per-code minutes add up to the
+  # dive length.
   #
-  # With no clustering report rendered, these CSVs are also where the codes are
-  # interpreted from: each row carries its cell 18 and 38 kHz Sv next to its
-  # code, so grouping by code gives the per-cluster statistics that say what
-  # each id actually is.
+  # These CSVs are also where the codes can be interpreted without a figure:
+  # each row carries its cell 18 and 38 kHz Sv next to its code, so grouping
+  # by code gives the per-cluster statistics that say what each id actually is.
   #
   # The dive lines are read here, per dive, onto that dive's slice of the
   # merged grid, from the dive_fit_evl / dive_u99_evl / dive_l99_evl paths on
@@ -67,12 +74,12 @@ steps:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
       range_var: "depth"
-      ping_time_bin_s: 10.0
+      ping_time_bin: ${inputs.ping_time_bin}
     custom_spec:
       description: Write per-dive SVCode CSVs from the embedded clustering.
       callable_path: aa_si_utils.dive_profiles.generate_sv_codes
       cache_key: dive_profiles_generate_sv_codes
-      version: "2"
+      version: "3"
       inputs:
         ds: {type: Dataset}
       params:
@@ -84,7 +91,7 @@ steps:
         dataset_name: {type: str}
         ml_result_name: {type: str}
         range_var: {type: str}
-        ping_time_bin_s: {type: float}
+        ping_time_bin: {type: str}
       outputs:
         code_csv_paths: {type: list}
         summary_csv_path: {type: path}

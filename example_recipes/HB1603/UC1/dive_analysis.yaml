@@ -12,8 +12,8 @@
 #   level 1, 2a       the survey's per-file Sv, a cache hit at crop_survey_range
 #   level 2b (user)   per file, inside the dive windows: surface, frequency and
 #                     seabed masks, then noise removal
-#   level 3 (user)    per file: sparse mask, grid, per-cell CV; fan in; one
-#                     slice per dive
+#   level 3 (user)    per file: sparse mask, grid, per-cell CV; fan in to the
+#                     pooled dive grid
 #   level 4           pooled HDBSCAN clustering and the clustering report
 #   level 5           per-dive SVCodes and the depth-interval tables
 #
@@ -58,8 +58,9 @@
 #   They are one per-file chain. Nothing non-mapped may be declared between
 #   those four includes, which is why the dive plan comes first.
 #
-# Equivalent, step for step and hash for hash, to
-# full_analysis_seabed_sv_mask.yaml, which it reorganises.
+# Reorganises full_analysis_seabed_sv_mask.yaml. The survey levels still hash
+# identically to it; the user levels have since moved on (dive_depth, bin
+# snapping), so the two are no longer step for step the same.
 #
 # Sanity-check the shape before a long run:
 #   aa-recipe dry-run dive_analysis.yaml --visualize
@@ -88,14 +89,15 @@ inputs:
       Range ceiling applied per file. Every consumer shares it: change it and
       the whole survey Sv is recomputed. See processing_lvl_2_survey.yaml.
 
-  # --- Shared by levels 2b and 3 -------------------------------------------
+  # --- Shared by levels 2b, 3 and 5 ----------------------------------------
   ping_time_bin:
     type: str
     default: "10s"
     description: >
       Ping-time bin of the per-dive grid. Level 2b widens each dive window to
       whole bins of this width so the first and last bins of a dive are
-      averaged over all of their pings, and level 3 grids on it.
+      averaged over all of their pings, level 3 grids on it, and level 5
+      counts one bin of this length per ping in the duration tables.
 
 steps:
 
@@ -134,17 +136,21 @@ steps:
 
   - include: sub_recipes/processing_lvl_1_per_file.yaml
     input_overrides:
-      calibration_dict: ${build_cal_mapping.calibration_dict}
-      mapping_dict: ${build_cal_mapping.mapping_dict}
+      per_file_source: ${query_ncei.raw_urls}
 
   - include: sub_recipes/processing_lvl_2_survey.yaml
     input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
       crop_max_range_m: ${inputs.crop_max_range_m}
 
   # --- User levels ----------------------------------------------------------
 
   - include: sub_recipes/processing_lvl_2_user.yaml
     input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      sv_source: ${crop_survey_range.ds_Sv}
       dive_windows: ${plan_dives.windows}
       ping_time_bin: ${inputs.ping_time_bin}
       # 0.0 makes depth equal echo_range, as the reference analysis binned it.
@@ -163,7 +169,7 @@ steps:
 
   - include: sub_recipes/processing_lvl_3_user.yaml
     input_overrides:
-      dive_windows: ${plan_dives.windows}
+      per_file_source: ${query_ncei.raw_urls}
       ping_time_bin: ${inputs.ping_time_bin}
       range_bin: "2m"
       range_var: "depth"
@@ -176,8 +182,8 @@ steps:
 
   - include: sub_recipes/processing_lvl_4.yaml
     input_overrides:
-      mvbs: ${merge_dive_mvbs.merged}
-      cell_stats_sv: ${merge_dive_cell_stats.merged}
+      mvbs: ${rechunk_dive_mvbs.ds_Sv}
+      cell_stats_sv: ${merge_dive_files_cell_stats.merged}
       dive_windows: ${plan_dives.windows}
       sample_size: 1200000
       min_cluster_size_fraction: 0.01
@@ -187,5 +193,6 @@ steps:
     input_overrides:
       clustered: ${embed_results.ds_normalized}
       dive_windows: ${plan_dives.windows}
+      ping_time_bin: ${inputs.ping_time_bin}
       code_output_dir: "./outputs/sv_codes"
       depth_interval_m: 200.0

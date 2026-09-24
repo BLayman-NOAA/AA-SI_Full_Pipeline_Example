@@ -54,9 +54,11 @@ steps:
 
   - include: sub_recipes/processing_lvl_1_per_file.yaml
     input_overrides:
-      calibration_dict: ${build_cal_mapping.calibration_dict}
-      mapping_dict: ${build_cal_mapping.mapping_dict}
+      per_file_source: ${query_ncei.raw_urls}
 
   - include: sub_recipes/processing_lvl_2_survey.yaml
     input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
       crop_max_range_m: ${inputs.crop_max_range_m}

@@ -1,0 +1,85 @@
+# Processing level 2a (raw calibration): per-file Sv from the file's own
+# gains and environment, transducer depth without heave, cropped.
+#
+#   compute_sv -> compute_transducer_depth -> crop_range
+#
+# The raw-calibration counterpart of processing_lvl_2_survey.yaml, for
+# dive_analysis_raw_cal.yaml. Three differences, all deliberate:
+#
+#   * compute_sv is handed no calibration and no environment. echopype then
+#     reads the gain, sa correction, equivalent beam angle, sound speed and
+#     absorption each file recorded, which is what the NEFSC reference
+#     analysis did. The operators changed sound speed during the cruise,
+#     1522.6 to 1543.3 m/s, and this follows them file by file; the survey
+#     tier applies the 18 July calibration day's values to every file.
+#   * compute_transducer_depth runs with use_heave false: the static depth the
+#     file recorded, 6 or 9 m on the dive dates, on every ping.
+#   * There is no ep_add_depth. Depth is added once, in level 2b's dive_depth,
+#     from the transducer depth computed here. crop_range works on echo_range
+#     and needs no depth.
+#
+# Not the survey's cache. compute_sv's inputs differ, so every hash from here
+# down is this path's own. That is why the chain is mapped over the dive files
+# only, which processing_lvl_0_raw_cal.yaml's query provides.
+
+recipe:
+  name: "hb1603_processing_lvl_2_raw_cal"
+  description: "Per-file Sv from raw-file calibration and environment, static transducer depth, range crop."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  per_file_source:
+    type: str
+    description: >
+      The ${step.output} list the per-file steps map over, one instance per
+      entry. Must be overridden by the including recipe, with the same value
+      for every level that shares the chain. Normally ${query_ncei.raw_urls}:
+      the whole catalogue, or the dive files alone when that query carries
+      file_names. Substituted textually, so the fingerprinted map_over is the
+      value passed.
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: >
+      Fixed range ceiling applied per file. The dive analysis codes nothing
+      below about 1400 m, but the quiet water between the deepest dive cell
+      and this ceiling is where the noise estimator in level 2b finds its floor.
+
+steps:
+
+  # Handed nothing but the EchoData: gains and environment come from the file.
+  - id: compute_sv
+    op: compute_sv
+    map_over: ${inputs.per_file_source}
+    checkpoint: always
+    inputs:
+      echodata: ${combine_raw.echodata}
+
+  # Reads the ER60 per-ping transducer depth from the Platform group, which
+  # echopype's own platform-offset formula gets the wrong sign on for EK60.
+  # Without heave it is one value per file, held on every ping, so level 2b
+  # can add it to a windowed subset: echopype aligns the array by ping_time.
+  - id: compute_transducer_depth
+    op: compute_transducer_depth
+    map_over: ${inputs.per_file_source}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+      echodata: ${combine_raw.echodata}
+    params:
+      use_heave: false
+
+  # The chain's surviving per-file output, so it is checkpointed and read_raw's
+  # scratch stores can be disposed of as instances finish.
+  - id: crop_dive_range
+    op: crop_range
+    map_over: ${inputs.per_file_source}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      max_range_m: ${inputs.crop_max_range_m}
+      drop_trailing_all_nan: false
+      outlier_sigma: null

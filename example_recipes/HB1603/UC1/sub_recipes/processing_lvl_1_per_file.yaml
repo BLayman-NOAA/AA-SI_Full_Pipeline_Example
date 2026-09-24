@@ -1,12 +1,24 @@
-# Processing level 1: raw ingest and per-file calibration parameters.
+# Processing level 1: raw ingest.
 #
-#   read_raw -> combine_raw -> extract_cal_params
+#   read_raw -> combine_raw
 #
-# The top of the per-file chain: one instance per catalogue file, streamed from
-# NCEI, ending at an EchoData object and the calibration and environment
-# parameters compute_sv needs for that file. Shared by the survey recipe and
-# every user recipe, and nothing here is checkpointed: read_raw's output is a
-# scratch store the run deletes, and the Sv in level 2 is what is worth caching.
+# The top of the per-file chain: one instance per file, streamed from NCEI,
+# ending at a lazily opened EchoData object. It knows nothing about
+# calibration, which is what lets the survey recipes and the raw-calibration
+# variant share it: the calibrated path continues in processing_lvl_2_survey,
+# the raw path in processing_lvl_2_raw_cal. Nothing here is checkpointed:
+# read_raw's output is a scratch store the run deletes, and the Sv in level 2
+# is what is worth caching.
+#
+# WHAT THE STEPS MAP OVER
+#
+#   per_file_source, an input the including recipe must set, normally
+#   ${query_ncei.raw_urls}: the whole catalogue, or the dive files alone when
+#   that query carries file_names. Every level that continues this chain must
+#   be given the same value, or the chain splits. The include substitutes the
+#   value into map_over textually, so the fingerprint sees the step reference
+#   and a recipe passing the catalogue hashes exactly as it did before this
+#   input existed.
 #
 # THE STEPS BELOW ARE FROZEN
 #
@@ -18,24 +30,27 @@
 #
 # INCLUDE LEVELS 1 TO 3 BACK TO BACK
 #
-#   They are one chain mapped over query_ncei.raw_urls. A non-mapped step
+#   They are one chain mapped over per_file_source. A non-mapped step
 #   declared between two of them splits it, and the halves stop sharing an
 #   element context.
 
 recipe:
   name: "hb1603_processing_lvl_1_per_file"
-  description: "Per-file raw ingest and calibration parameters, streamed from NCEI."
+  description: "Per-file raw ingest, streamed from NCEI."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
 
 inputs:
-  calibration_dict:
-    type: dict
-    description: "Standardized calibration data, from build_cal_mapping."
-  mapping_dict:
-    type: dict
-    description: "Raw channel to calibration key mapping, from build_cal_mapping."
+  per_file_source:
+    type: str
+    description: >
+      The ${step.output} list the per-file steps map over, one instance per
+      entry. Must be overridden by the including recipe, with the same value
+      for every level that shares the chain. Normally ${query_ncei.raw_urls}:
+      the whole catalogue, or the dive files alone when that query carries
+      file_names. Substituted textually, so the fingerprinted map_over is the
+      value passed.
   sonar_model:
     type: str
     default: "EK60"
@@ -68,11 +83,11 @@ steps:
   #   only when you actually change it.
   - id: read_raw
     op: read_raw_files
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     checkpoint: never
     # Delete each file's intermediate store as soon as its instance finishes,
     # instead of letting temp_dir/data grow to one store per catalogue file.
-    # Safe because crop_survey_range below is checkpointed: the client reloads
+    # Safe because the crop step at the end of level 2a is checkpointed: the client reloads
     # a checkpointed member from the cache when it folds the chain in, so
     # nothing that outlives the instance is still rooted in the deleted store.
     dispose_outputs: [raw_stores]
@@ -89,38 +104,6 @@ steps:
 
   - id: combine_raw
     op: combine_raw_files
-    map_over: ${query_ncei.raw_urls}
+    map_over: ${inputs.per_file_source}
     inputs:
       raw_stores: ${read_raw.raw_stores}
-
-  # Path(url).name gives the bare filename, which is the key the calibration
-  # mapping is built under, so a URL resolves the same as a local path would.
-  #
-  # unmapped_channels is left at its "warn" default, so a channel no
-  # calibration file matched falls back to the values the raw file records for
-  # it and says so on the terminal. Set it to "error" for a survey where an
-  # unmatched channel should stop the run.
-  #
-  # HB1603 needs this, but not for the transmit power difference the match
-  # tolerance in processing_lvl_0_survey.yaml now covers. It is pulse length: on
-  # the first 151 files of the cruise, 27 and 28 June, the 18 kHz channel ran
-  # at 2.048 ms and 120 and 200 kHz at 0.256 ms, against calibrations measured
-  # at 1.024 ms. 120 and 200 kHz transmit at exactly their calibrated power, so
-  # no power tolerance reaches them. Widening transmit_duration_nominal is not
-  # the answer either: pulse length sets the effective pulse duration and the
-  # equivalent beam correction, so a 2x or 4x difference is a different
-  # measurement rather than a tolerance question. Those files end on 28 June
-  # and the earliest dive is 7 July, so no dive is affected, but the merged
-  # survey Sv store does carry them on fallback calibration.
-  #
-  # mapping_files/calibration_provenance.yaml is where that is written down
-  # per channel, with the time range of each stretch and the field behind it.
-  - id: extract_cal_params
-    op: extract_standardized_cal_params
-    map_over: ${query_ncei.raw_urls}
-    inputs:
-      calibration_dict: ${inputs.calibration_dict}
-      mapping_dict: ${inputs.mapping_dict}
-      echodata: ${combine_raw.echodata}
-    params:
-      raw_file_path: ${_item}
