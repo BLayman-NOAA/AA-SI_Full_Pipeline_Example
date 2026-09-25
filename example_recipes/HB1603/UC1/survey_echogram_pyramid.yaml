@@ -1,6 +1,6 @@
 # HB1603 survey echogram pyramid: the whole cruise, built for EchogramGL.
 #
-# Every catalogue file, all five frequencies, seabed removed, as one
+# Every catalogue file, 18 and 38 kHz, seabed removed, as one
 # level-of-detail store the WebGPU viewer can open. It computes no Sv and
 # builds no calibration: levels 0 to 2a are the survey's, included so their
 # hashes match and the per-file Sv loads from the cache. Everything from the
@@ -27,12 +27,14 @@
 #   before MVBS. The line comes from phase_detect_seafloor, which needs no
 #   .bot file, no Echoview line and no depth window: it estimates the seabed
 #   from sampled slabs of each file first and searches around that. Where the
-#   bottom lies below the 1800 m crop the ping is kept whole. The line is not
+#   bottom lies below the viewer's 3000 m crop the ping is kept whole. The line is not
 #   the analyst line the dive analysis masks with, so the two products'
 #   bottoms differ by metres where they overlap; the dive results are meant
-#   to be layered over this store regardless. All five frequencies are kept,
-#   and noise removal blanks each one at the range where it stops carrying
-#   signal. processing_lvl_2_viewer_seabed.yaml explains the choices; the
+#   to be layered over this store regardless. The line is the slope-corrected
+#   integration line rather than the leading edge, which clears more bottom
+#   echo on steep walls. Only 18 and 38 kHz are kept: below a few hundred
+#   metres 70, 120 and 200 kHz carry range-amplified noise that survives
+#   noise removal. processing_lvl_2_viewer_seabed.yaml explains the choices; the
 #   older processing_lvl_2_viewer.yaml is the seabed-in variant.
 #
 # THE GRID MATCHES THE ANALYSIS GRID
@@ -105,7 +107,7 @@
 
 recipe:
   name: "hb1603_survey_echogram_pyramid"
-  description: "The whole HB1603 cruise as an EchogramGL pyramid: per-file MVBS on depth, all five frequencies, seabed masked by the phase-aware picker."
+  description: "The whole HB1603 cruise as an EchogramGL pyramid: per-file MVBS on depth, 18 and 38 kHz, seabed masked by the phase-aware picker."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -138,6 +140,25 @@ inputs:
       Range ceiling applied per file. Every consumer shares it: change it and
       the whole survey Sv is recomputed. See processing_lvl_2_survey.yaml.
 
+  # --- Viewer level ---------------------------------------------------------
+  viewer_crop_max_range_m:
+    type: float
+    default: 3000.0
+    description: >
+      Range ceiling of the picture, applied by the viewer level after it adds
+      split-beam angles. Separate from crop_max_range_m so the shared survey
+      Sv stays cropped at 1800 m. HB1603 recorded to 2960-3003 m, and on 43
+      files sampled from the 338 whose seabed lay below 1800 m it sat at 2400
+      to 2950 m or beyond the recording, so 2100 m would recover almost none
+      of them.
+  viewer_grid_max_depth:
+    type: str
+    default: "3010m"
+    description: >
+      Deepest depth the level 3 bins cover. Must clear viewer_crop_max_range_m
+      plus the transducer depth (about 6 to 9 m), rounded up to a 2 m bin
+      edge, or the deepest samples are dropped.
+
   # Every other input lives in the level file that uses it, and is still
   # settable from here or with --input: includes promote them.
 
@@ -165,12 +186,15 @@ steps:
 
   # --- Viewer levels --------------------------------------------------------
 
-  # Same crop as the survey level, because the angles go on before it.
+  # Its own, deeper crop: the angles go on before any crop, so the viewer
+  # can see past the survey's 1800 m without touching the shared Sv.
   - include: sub_recipes/processing_lvl_2_viewer_seabed.yaml
     input_overrides:
-      crop_max_range_m: ${inputs.crop_max_range_m}
+      crop_max_range_m: ${inputs.viewer_crop_max_range_m}
 
   - include: sub_recipes/processing_lvl_3_viewer.yaml
+    input_overrides:
+      grid_max_depth: ${inputs.viewer_grid_max_depth}
 
   - include: sub_recipes/viewer_pyramid.yaml
     input_overrides:

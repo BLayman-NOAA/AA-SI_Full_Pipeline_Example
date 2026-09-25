@@ -190,11 +190,14 @@ steps:
       # This op defaults to "datetime", which would draw the whole 38-day span
       # with the dives as hairlines; see THE PLOTS MUST USE x_axis_units: bins.
       x_axis_units: "bins"
-      # About 1300 bins against 1500 m of depth is a near-square data aspect,
-      # which the automatic rule turns into a panel taller than it is wide.
-      # Pin a 16:9 panel instead so the figure fits a screen.
+      # About 1300 bins against 2400 m of depth is a taller-than-wide data
+      # aspect, which the automatic rule turns into a panel taller than it is
+      # wide. Pin a 16:9 panel instead so the figure fits a screen.
       y_to_x_aspect_ratio_override: 1.78
-      plot_window: [0, 1500]
+      # Down to 2400 m: the dives use the whole water column to the seabed,
+      # which reaches 2343 m on the deepest dive, so clusters below the whales
+      # are drawn rather than cut off at the old 1500 m.
+      plot_window: [0, 2400]
       cluster_stats_sv_data_var: "Sv"
       # Per-dive profile and 99% bounds, each dive its own segment. See
       # OVERLAPPING DIVES for why these are not attached upstream.

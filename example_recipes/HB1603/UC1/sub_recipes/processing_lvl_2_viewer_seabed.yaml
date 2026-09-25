@@ -17,7 +17,7 @@
 #   estimates the seabed from a few dozen slabs of pings across the whole
 #   recorded range, then searches around that estimate, per file, so the same
 #   step serves the shelf and the abyssal plain. Where a file's seabed lies
-#   below the 1800 m crop nothing is found, and missing: max_range keeps those
+#   below this level's crop nothing is found, and missing: max_range keeps those
 #   pings whole instead of blanking them, which is the difference between a
 #   survey picture and the dive analysis (whose read_seafloor_line masks a
 #   ping with no line entirely, on purpose).
@@ -27,12 +27,13 @@
 #   products' bottoms will differ by metres where they overlap; the analysis
 #   store is meant to be layered over this one anyway.
 #
-# WHY ANGLES ARE ADDED HERE AND THE CROP IS REPEATED
+# WHY ANGLES ARE ADDED HERE AND THIS LEVEL CROPS FOR ITSELF
 #
 #   The picker reads split-beam angles off the Sv dataset. echopype can only
 #   attach them to an uncropped dataset (it checks range_sample against the
 #   beam group), so this level takes the survey's ep_add_depth output, adds
-#   angles, and applies the survey's crop again. ep_add_depth is a cheap
+#   angles, and crops for itself, to its own crop_max_range_m (3000 m from the
+#   pyramid recipe, against the survey's 1800 m). ep_add_depth is a cheap
 #   derivation of the compute_sv and compute_transducer_depth checkpoints, so
 #   the run still builds on the survey cache from compute_sv down; only
 #   crop_survey_range itself is not reused. The survey includes above this
@@ -40,7 +41,7 @@
 #
 # THE REST IS processing_lvl_2_viewer.yaml
 #
-#   No window (every file), all five frequencies unless frequencies_to_mask
+#   No window (every file), 18 and 38 kHz only unless frequencies_to_mask
 #   says otherwise, and noise removal after the masks, per file. The seabed is
 #   masked at full-resolution Sv, before noise removal and before MVBS, so the
 #   noise estimate never sees the bottom and no bin averages water with seabed.
@@ -60,9 +61,11 @@ inputs:
     type: float
     default: 1800.0
     description: >
-      Range ceiling applied after the angles are added. Must equal the survey
-      level's crop_max_range_m so this level's Sv matches the shared one
-      sample for sample.
+      Range ceiling applied after the angles are added. Independent of the
+      survey level's crop, because this level starts from the uncropped
+      ep_add_depth output; the pyramid recipe sets it to 3000 m so seabeds
+      between 1800 m and the end of the recording are found and masked. Level
+      3's grid_max_depth has to reach it.
   seabed_channel:
     type: str
     default: "38"
@@ -94,7 +97,7 @@ inputs:
       bottom echo is left in the picture there.
   seabed_line:
     type: str
-    default: "leading_edge"
+    default: "integration"
     description: >
       "leading_edge" masks from the top of the seabed echo; "integration"
       masks from the slope-corrected Ona-Mitson backstep above it, which
@@ -108,10 +111,12 @@ inputs:
       down, so 10 m of range is roughly the top 19 m of water.
   frequencies_to_mask:
     type: list
-    default: []
+    default: [70, 120, 200]
     description: >
-      Channel frequencies in kHz to blank. Empty keeps all five. Set
-      [70, 120, 200] for a store that matches the dive analysis.
+      Channel frequencies in kHz to blank. The default drops the three high
+      frequencies, which below a few hundred metres carry only range-amplified
+      noise that survives noise removal, and matches the dive analysis. Empty
+      keeps all five.
   noise_range_sample_num:
     type: int
     default: 10
@@ -146,7 +151,7 @@ steps:
       encode_mode: "power"
       to_disk: false
 
-  # The survey's crop, repeated on the dataset that now carries angles.
+  # This level's own crop, on the dataset that now carries angles.
   - id: viewer_crop
     op: crop_range
     map_over: ${query_ncei.raw_urls}

@@ -127,7 +127,9 @@ steps:
   - include: sub_recipes/processing_lvl_2_raw_cal.yaml
     input_overrides:
       per_file_source: ${query_ncei.raw_urls}
-      crop_max_range_m: 1800.0
+      # No range cap: the dives use the whole recorded water column, down to
+      # the seabed line.
+      crop_max_range_m: null
 
   # --- User levels: the same files and values as dive_analysis.yaml --------
 
@@ -158,10 +160,12 @@ steps:
       range_bin: "2m"
       range_var: "depth"
       nan_threshold: 0.99
-      # Pinned so every file shares one depth axis. It must clear the deepest
-      # depth the data reaches: crop_max_range_m plus the largest transducer
-      # depth, rounded up to a range_bin edge.
-      mvbs_range_var_max: "1810m"
+      # Pinned so every file shares one depth axis. The dives are analysed
+      # over the full recorded water column down to the seabed line, and
+      # HB1603 recorded to 2960-3003 m of range; with dive_depth_offset 0.0
+      # depth equals range, so 3010m clears every file. Bins below a file's
+      # seabed are empty and the clustering drops them.
+      mvbs_range_var_max: "3010m"
       dive_chunk_ping_time: 1000
 
   - include: sub_recipes/processing_lvl_4.yaml
