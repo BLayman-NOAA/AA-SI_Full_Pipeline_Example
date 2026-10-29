@@ -1,0 +1,17 @@
+# Run configuration for demo_survey_sv.yaml, found by the
+# <recipe_stem>.config.yaml rule ahead of aa-recipe.config.yaml.
+#
+# Everything is local, under ./demo, relative to this folder: run from here.
+# demo_survey_sv.config.yaml and demo_dive_analysis.config.yaml hold the same
+# values, so the dive analysis reads the survey tier the demo survey wrote.
+# Raw files stream from NCEI over public HTTPS and need no credentials.
+
+# Kept short on purpose. Windows without long path support stops at 260
+# characters, and the clustering checkpoints nest about 155 characters of
+# zarr paths under this folder, so ./demo/user_cache fails on this checkout.
+user_cache_dir: ./demo/user
+survey_cache_dir: ./demo/survey_cache
+temp_dir: ./demo/exe_temp
+outputs_dir: ./demo/outputs
+
+executor: sequential

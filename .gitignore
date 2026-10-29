@@ -11,6 +11,7 @@ survey_cache/
 example_recipes/outputs
 exe_temp/
 outputs/
+example_recipes/HB1603/UC1/demo/
 
 
 # Poetry
