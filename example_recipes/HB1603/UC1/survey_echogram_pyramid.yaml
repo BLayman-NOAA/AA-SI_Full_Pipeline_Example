@@ -1,14 +1,13 @@
 # HB1603 survey echogram pyramid: the whole cruise, built for EchogramGL.
 #
-# Every catalogue file, 18 and 38 kHz, seabed removed, as one
-# level-of-detail store the WebGPU viewer can open. It computes no Sv and
-# builds no calibration: levels 0 to 2a are the survey's, included so their
-# hashes match and the per-file Sv loads from the cache. Everything from the
-# angles and the seabed line down is this recipe's own.
+# Every catalogue file, 18 and 38 kHz, seabed removed, as one level-of-detail
+# store the WebGPU viewer can open. Levels 0 to 2a are the survey's, included
+# so their hashes match and the per-file Sv loads from the cache; everything
+# from the split-beam angles down is this recipe's own.
 #
 #   aa-recipe run survey_echogram_pyramid.yaml --executor dask --dask-workers 16
 #
-#   level 0 (user)     the survey's catalogue and calibration mapping, LOADED
+#   level 0 (user)     the survey's catalogue and calibration mapping, loaded
 #   level 1, 2a        the survey's per-file Sv, cache hits at compute_sv and
 #                      compute_transducer_depth
 #   level 2b (viewer)  per file: split-beam angles, crop, phase-aware seabed
@@ -17,92 +16,53 @@
 #                      fan in to one survey-wide MVBS store
 #   pyramid            plan segments, build each, merge: the viewer store
 #
-# This is the "survey context store" of the dive-profile workflow's Phase 5.4:
-# on depth, from per-file MVBS, so the per-dive analysis store can be layered
-# over it later.
-#
-# WHAT IS IN THE PICTURE, AND WHAT IS MASKED
-#
-#   The seabed is masked out, at full-resolution Sv, before noise removal and
-#   before MVBS. The line comes from phase_detect_seafloor, which needs no
-#   .bot file, no Echoview line and no depth window: it estimates the seabed
-#   from sampled slabs of each file first and searches around that. Where the
-#   bottom lies below the viewer's 3000 m crop the ping is kept whole. The line is not
-#   the analyst line the dive analysis masks with, so the two products'
-#   bottoms differ by metres where they overlap; the dive results are meant
-#   to be layered over this store regardless. The line is the slope-corrected
-#   integration line rather than the leading edge, which clears more bottom
-#   echo on steep walls. Only 18 and 38 kHz are kept: below a few hundred
-#   metres 70, 120 and 200 kHz carry range-amplified noise that survives
-#   noise removal. processing_lvl_2_viewer_seabed.yaml explains the choices; the
-#   older processing_lvl_2_viewer.yaml is the seabed-in variant.
+# The survey context store of the dive-profile workflow (Phase 5.4): on depth,
+# from per-file MVBS, so the per-dive analysis store can be layered over it.
+# processing_lvl_2_viewer_seabed.yaml explains the masking choices.
 #
 # THE GRID MATCHES THE ANALYSIS GRID
 #
-#   Level 3 bins 2 m by 10 s on depth, the grid dive_analysis.yaml clusters
-#   on, and compute_mvbs anchors time bins to a global origin, so level zero
-#   of the pyramid shares the analysis cells in time and in bin size. One
-#   caveat: the analysis builds its depth with dive_depth_offset 0.0 (depth
-#   equal to range from the transducer), while this store is surface
-#   referenced through compute_transducer_depth, about 8.9 m deeper. For the
-#   cells to coincide vertically as well, the analysis must use the same
-#   reference (wire compute_transducer_depth.transducer_depth into
-#   dive_depth_offset), or this store must use 0.0.
+#   Level 3 bins 2 m by 10 s on depth, as dive_analysis.yaml does, with time
+#   bins on a global origin, so the cells coincide in time and size. Not
+#   vertically: the analysis uses dive_depth_offset 0.0 (range from the
+#   transducer) while this store is surface referenced, about 8.9 m deeper.
+#   Wire the transducer depth into the analysis's dive_depth_offset, or use 0.0
+#   here, to make them coincide.
 #
 # WHAT THIS RUN COSTS
 #
-#   Hours, not minutes: 3322 per-file Sv derived from the compute_sv cache,
-#   each given angles, cropped, bottom-picked (a few seconds per file),
-#   masked, denoised and binned. crop_survey_range itself is not reused,
-#   because the angles have to go on before the crop. The seabed line and the
-#   per-file MVBS are checkpointed, so an interrupted run resumes from the
-#   files it finished. The pyramid itself is minutes. Once it has run, every
-#   step is a cache hit and the store is simply there.
+#   Hours: 3322 files each given angles, cropped, bottom-picked, masked,
+#   denoised and binned; crop_survey_range cannot be reused because the angles
+#   go on before the crop. The seabed line and per-file MVBS are checkpointed,
+#   so an interrupted run resumes; the pyramid itself takes minutes, and
+#   changing only its settings reruns only the pyramid. Every artifact is zarr,
+#   so --cache-write-tier survey can share the store.
 #
-#   Changing the bins, the noise settings, the masks or the seabed settings
-#   re-runs the per-file half. Changing only the pyramid settings re-runs
-#   only the pyramid.
-#
-#   To share the store instead of keeping it in your own tier, add
-#   --cache-write-tier survey. Every artifact here is zarr, which the shared
-#   tier accepts.
-#
-# NEEDS aa-si-echogram-gl IN THE RUN ENVIRONMENT
-#
-#   The pyramid ops live in AA-SI_EchogramGL: pip install -e it into the
-#   environment aa-recipe runs from. See sub_recipes/viewer_pyramid.yaml for
-#   where the store lands and how to serve it.
+# The pyramid ops live in AA-SI_EchogramGL: pip install -e it into the
+# environment aa-recipe runs from. sub_recipes/viewer_pyramid.yaml says where
+# the store lands and how to serve it.
 #
 # THE SURVEY LEVELS MUST STAY IN STEP WITH survey_sv.yaml
 #
-#   Same include order, same overrides, same input values below. With the
-#   default file window this recipe addresses the survey cache exactly as
-#   survey_sv.yaml does.
+#   Same include order, overrides and input values. Levels 1 to 3 are one
+#   per-file chain: nothing non-mapped may be declared between those includes.
 #
 # TESTING ON A SUBSET FIRST
 #
-#   file_time_start / file_time_end narrow the catalogue query, and every
-#   per-file step maps over what the query returns, so a window is all a
-#   subset needs:
+#   Every per-file step maps over the catalogue query, so a narrower window is
+#   all a subset needs:
 #
-#     aa-recipe run survey_echogram_pyramid.yaml #       --input file_time_start=2016-07-25T20:58 #       --input file_time_end=2016-07-25T23:45
+#     aa-recipe run survey_echogram_pyramid.yaml \
+#       --input file_time_start=2016-07-25T20:58 \
+#       --input file_time_end=2016-07-25T23:45
 #
 #   That is the nine-file leg the picker was validated on (1500 to 2000 m,
-#   canyon walls and soft sediment), about 15 minutes end to end. A narrowed
-#   query is a different cache lineage: the query is a parent of every
-#   per-file step, so the subset run reads its raw files from NCEI and
-#   computes their Sv itself rather than hitting the survey cache, and the
-#   full run later reuses nothing from it. That is fine for a test; it is why
-#   the full survey must be run with the default window, and only then.
-#   Use --user-cache-dir or --outputs-dir to keep a test run's artifacts
-#   apart from the survey's if you want to delete them afterwards.
+#   canyon walls and soft sediment), about 15 minutes. A narrowed query is a
+#   separate cache lineage: the subset computes its own Sv and the full run
+#   reuses nothing from it, so run the full survey with the default window.
+#   --user-cache-dir or --outputs-dir keep a test run's artifacts apart.
 #
-# ORDER MATTERS BETWEEN LEVELS 1 AND 3
-#
-#   They are one per-file chain. Nothing non-mapped may be declared between
-#   those four includes.
-#
-# Sanity-check the shape before a long run:
+# Check the shape before a long run:
 #   aa-recipe dry-run survey_echogram_pyramid.yaml --visualize
 
 recipe:
@@ -114,57 +74,55 @@ recipe:
 
 inputs:
 
-  # --- Survey level. Must equal survey_sv.yaml's. --------------------------
+  # Survey level: must equal survey_sv.yaml's, or the cached survey chain is
+  # recomputed. Narrow the query window only for a test run; see TESTING ON A
+  # SUBSET FIRST in the header.
   file_time_start:
     type: str
     default: "2016-06-01T00:00:00"
     description: >
-      Lower bound of the catalogue query. The default is the survey's and
-      selects the whole cruise; narrow it only for a test run, see TESTING ON
-      A SUBSET FIRST in the header.
+      Start of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T20:58". Every file overlapping the window is fetched.
   file_time_end:
     type: str
     default: "2016-09-01T00:00:00"
-    description: "Upper bound of the catalogue query. See file_time_start."
+    description: >
+      End of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T21:45". Every file overlapping the window is fetched.
   cal_input_folder:
     type: path
     default: "../calibration_files/HB201607_cal"
-    description: "Manufacturer .cal files."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_output_dir:
     type: path
     default: "./outputs/calibration"
+    description: "Root folder the calibration artifacts are written under."
   crop_max_range_m:
     type: float
     default: 1800.0
-    description: >
-      Range ceiling applied per file. Every consumer shares it: change it and
-      the whole survey Sv is recomputed. See processing_lvl_2_survey.yaml.
+    description: "Range ceiling in metres; samples beyond it are dropped even if they hold data. Changing it recomputes the whole survey Sv."
 
-  # --- Viewer level ---------------------------------------------------------
+  # Viewer level.
+  # HB1603 recorded to 2960-3003 m, and seabeds below 1800 m sat at 2400 to
+  # 2950 m, so a 2100 m ceiling would recover almost none of them.
   viewer_crop_max_range_m:
     type: float
     default: 3000.0
-    description: >
-      Range ceiling of the picture, applied by the viewer level after it adds
-      split-beam angles. Separate from crop_max_range_m so the shared survey
-      Sv stays cropped at 1800 m. HB1603 recorded to 2960-3003 m, and on 43
-      files sampled from the 338 whose seabed lay below 1800 m it sat at 2400
-      to 2950 m or beyond the recording, so 2100 m would recover almost none
-      of them.
+    description: "Range ceiling of the viewer picture, in metres. Separate from crop_max_range_m, so the shared survey Sv keeps its own crop."
   viewer_grid_max_depth:
     type: str
     default: "3010m"
     description: >
-      Deepest depth the level 3 bins cover. Must clear viewer_crop_max_range_m
-      plus the transducer depth (about 6 to 9 m), rounded up to a 2 m bin
-      edge, or the deepest samples are dropped.
+      Deepest depth the viewer bins cover, as a length string such as "3010m".
+      It must clear viewer_crop_max_range_m plus the transducer depth, or the
+      deepest samples are dropped.
 
   # Every other input lives in the level file that uses it, and is still
   # settable from here or with --input: includes promote them.
 
 steps:
 
-  # --- Survey levels: keep in step with survey_sv.yaml ---------------------
+  # Survey levels: keep in step with survey_sv.yaml
 
   - include: sub_recipes/processing_lvl_0_user.yaml
     input_overrides:
@@ -184,7 +142,7 @@ steps:
       mapping_dict: ${build_cal_mapping.mapping_dict}
       crop_max_range_m: ${inputs.crop_max_range_m}
 
-  # --- Viewer levels --------------------------------------------------------
+  # Viewer levels
 
   # Its own, deeper crop: the angles go on before any crop, so the viewer
   # can see past the survey's 1800 m without touching the shared Sv.

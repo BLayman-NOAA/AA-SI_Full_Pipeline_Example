@@ -1,19 +1,13 @@
-# Processing level 2b (user): window selection, masking and noise removal.
-#
-# The user half of level 2. Starts from the shared survey Sv store that
-# processing_lvl_2_survey.yaml produced, narrows to this user's segment, and
-# then does everything an analyst varies: seabed line, masking, noise removal.
+# Processing level 2b, user: window selection, masking and noise removal.
+# Starts from the shared survey Sv store of processing_lvl_2_survey.yaml and
+# narrows it to this user's segment.
 #
 #   select_window -> detect_seafloor -> seafloor/surface masks
 #                 -> combine -> apply_mask -> rechunk -> remove_noise
 #
-# select_window comes first so that only the steps below it are re-keyed per
-# window. Levels 1 and 2a keep one hash across all users and stay cache hits.
-#
-# There is no map_over here: the per-file fan-out ended at the survey merge, so
-# these steps run once on the windowed dataset. Everything stays lazy until
-# remove_noise forces it, and select_window narrows the dask graph to the chunks
-# the window actually touches.
+# select_window comes first so only the steps below it are re-keyed per
+# window; levels 1 and 2a keep one hash across all users. No map_over here:
+# the per-file fan-out ended at the survey merge.
 
 recipe:
   name: "processing_lvl_2_user"
@@ -25,61 +19,70 @@ recipe:
 inputs:
   survey_sv:
     type: dataset
-    description: "Merged, chunked survey-wide Sv from processing_lvl_2_survey.yaml."
+    description: >
+      Merged, chunked survey-wide Sv from the shared survey level, which this
+      segment selects its pings from.
   file_time_start:
     type: str
     required: false
     description: >
-      Inclusive ISO datetime lower bound for THIS user's segment. Selects the
-      ping_time window and the Echoview .evl line files to read, so the line
-      always spans the pings. Leave unset to take the whole survey.
+      Inclusive ISO UTC datetime start of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the start open.
   file_time_end:
     type: str
     required: false
-    description: "Inclusive ISO datetime upper bound; see file_time_start."
+    description: >
+      Inclusive ISO UTC datetime end of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the end open.
   seabed_line_folder:
     type: path
     description: >
-      Folder of Echoview .evl seabed line exports; the ones covering
-      file_time_start to file_time_end are combined into the seafloor used for
-      masking. A single .evl file also works, and is read whole.
+      Folder of Echoview .evl seabed line exports, a local path or a gs:// URL.
+      The files covering the time window are combined into the seafloor; a
+      single .evl file is read whole.
   seabed_line_max_gap_s:
     type: float
     default: 600
     description: >
-      Widest hole in the combined seabed line, in seconds, to interpolate
-      across. Consecutive line files butt up against each other to within a
-      second, so this only bites across a survey-leg gap.
+      Widest gap in the combined seabed line, in seconds, to interpolate
+      across; pings in a wider gap get no seafloor. Only a break between
+      survey legs is this wide.
   seabed_line_min_coverage:
     type: float
     default: 0.99
     description: >
-      Fraction of the window's pings that must land on the line before the step
-      fails, rather than letting create_seafloor_mask drop every sample of an
-      uncovered ping.
+      Fraction of the window's pings (0 to 1) the seabed line must cover, or
+      the step fails. Lower it or widen the window rather than let uncovered
+      pings through, since all their samples are masked.
   surface_mask_depth:
     type: float
     default: 10.0
-    description: "Depth in meters above which the surface mask excludes samples."
+    description: >
+      Range from the transducer, in metres, above which samples are masked, to
+      remove the transmit pulse and ringdown.
   seafloor_buffer_m:
     type: float
     default: 1.0
-    description: "Height of buffer above seabed line to mask."
+    description: >
+      Height above the seabed line, in metres, that is also masked, to drop the
+      bottom echo and detection error.
   noise_range_sample_num:
     type: int
     default: 10
-    description: "Number of range samples per bin used for background noise estimation."
+    description: "Range samples per bin for the background noise estimate."
   noise_ping_num:
     type: int
     default: 5
-    description: "Number of pings per bin used for background noise estimation."
+    description: "Pings per bin for the background noise estimate."
   noise_chunk_ping_time:
     type: int
     default: 1000
     description: >
-      Ping-time chunk size applied before remove_noise so its coarsen()-based
-      estimate runs in dask-parallel chunks. Keep it a multiple of
-      noise_ping_num so coarsen() dispatches across chunks cleanly.
+      Ping-time chunk size set before noise removal, so the noise estimate runs
+      in dask chunks rather than as one in-memory block. Keep it a multiple of
+      noise_ping_num.
 
 steps:
 
@@ -103,15 +106,14 @@ steps:
       # The same window that selected the pings, so the line spans them.
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
-      # No extrapolation past the line's ends. Uncovered pings come back NaN and
-      # create_seafloor_mask drops them, so min_coverage fails the run instead.
+      # No extrapolation past the line's ends. Uncovered pings would be masked
+      # away entirely, so min_coverage fails the run instead.
       edge_extend_s: 0.0
       max_gap_s: ${inputs.seabed_line_max_gap_s}
       min_coverage: ${inputs.seabed_line_min_coverage}
 
   # ds_Sv must carry 'depth' to match the surface-referenced line, or the mask
-  # falls back to 'echo_range' and comes out offset by the transducer depth.
-  # The survey store has been through ep_add_depth, so it does.
+  # comes out offset by the transducer depth. The survey store has it.
   - id: create_seafloor_mask
     op: create_seafloor_mask
     inputs:

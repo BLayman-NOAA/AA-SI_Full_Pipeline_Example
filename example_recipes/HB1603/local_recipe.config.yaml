@@ -1,41 +1,26 @@
-
 # Config for local_recipe.yaml, picked up automatically by
 # `aa-recipe run local_recipe.yaml`. Everything is local here, no bucket.
-#
-# Config discovery, first found wins:
-#   1. --config <path>
-#   2. $AA_RECIPE_CONFIG
-#   3. <recipe_dir>/<recipe_stem>.config.yaml, this file
-#   4. ./aa-recipe.config.yaml
-#   5. ~/.config/aa-recipe/config.yaml
-#
-# CLI flags override these values, which in turn override the recipe's own
-# input defaults.
+# CLI flags override these values, which override the recipe input defaults.
 
 user_cache_dir: ./user_cache
 
-# temp_dir holds the per-file zarr intermediates that read_raw writes and
-# combine_raw reads straight back, all deleted at the end of the run. Remote
-# checkpoint writes also stage through here before uploading, so leave room for
-# the largest staged store.
+# Per-file zarr intermediates, deleted after the run. Remote checkpoint writes
+# also stage here, so leave room for the largest staged store.
 temp_dir: ./exe_temp
 
-# outputs_dir must stay local for now: calibration artifacts and images are
-# written through pathlib and cannot target object storage yet.
+# Must stay local: calibration artifacts and images cannot target object
+# storage yet.
 outputs_dir: ./outputs
 
-# survey-level cache
 survey_cache_dir: ./survey_cache
 
-# fsspec storage options for remote paths. Leave commented for Application
-# Default Credentials (the usual case on a Cloud Workstation). Only set this for
-# non-default credentials, e.g. a service-account token file.
+# fsspec storage options for remote paths. Leave unset for Application Default
+# Credentials; set only for other credentials, such as a service-account token.
 # storage_options:
 #   token: /path/to/service-account.json
 
-# shared recipe. CLI --input NAME=VALUE still overrides these.
+# Recipe input values; --input NAME=VALUE overrides them.
 inputs:
-  # using same raws as Brett
   raw_input_folder: ./raw_file_inputs
 
   # cal_input_folder: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/HB1603/calibration

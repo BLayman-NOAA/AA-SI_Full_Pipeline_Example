@@ -1,25 +1,20 @@
 # HB1603 demo dive analysis: dive_analysis.yaml narrowed to one dive.
 #
-# A small, fully local recipe for testing and demonstrating the recipe manager
-# client. It is dive_analysis.yaml cut to dive SWD_20160814-OE09 (14:54 to
-# 15:06 UTC) and to the three raw files of demo_survey_sv.yaml, 2016-08-14
-# 14:40 to 15:25 UTC. OE09 is on the 1000 W side of the cruise, so its
-# 18 and 38 kHz match the 18 July calibration outright, and like every dive it
-# falls in active pinging.
+# A small recipe for testing and demonstrating the recipe manager client: dive
+# SWD_20160814-OE09 (14:54 to 15:06 UTC) over the three raw files of
+# demo_survey_sv.yaml. OE09 is on the 1000 W side of the cruise, so its 18 and
+# 38 kHz match the 18 July calibration outright.
 #
 # Run from this folder, the survey first:
 #
 #   aa-recipe run demo_survey_sv.yaml --cache-write-tier survey
 #   aa-recipe run demo_dive_analysis.yaml
 #
-# Levels 0 to 2a are demo_survey_sv.yaml's, with the same overrides, so they
-# hash identically and load from ./demo/survey_cache. Level 2b reads the
-# uncropped Sv, which is not checkpointed, so this run streams the dive files
-# again. Everything from level 2b on is computed in the user tier. Caches,
-# scratch and outputs go under ./demo, set in demo_dive_analysis.config.yaml.
-#
-# The user level values are dive_analysis.yaml's, apart from the dive list and
-# the output folder.
+# Levels 0 to 2a match demo_survey_sv.yaml and load from ./demo/survey_cache.
+# Level 2b reads the uncropped Sv, which is not checkpointed, so this run
+# streams the dive files again. Caches, scratch and outputs go under ./demo,
+# set in demo_dive_analysis.config.yaml. The user-level values are
+# dive_analysis.yaml's, apart from the dive list and the output folder.
 
 recipe:
   name: "hb1603_demo_dive_analysis"
@@ -30,24 +25,29 @@ recipe:
 
 inputs:
 
-  # Survey level. Must equal demo_survey_sv.yaml's.
+  # Survey level: must equal demo_survey_sv.yaml's, or the cached survey chain
+  # is recomputed.
   cal_input_folder:
     type: path
     default: "../calibration_files/HB201607_cal"
-    description: "Manufacturer .cal files."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_output_dir:
     type: path
     default: "./demo/outputs/calibration"
+    description: "Root folder the calibration artifacts are written under."
   crop_max_range_m:
     type: float
     default: 1800.0
-    description: "Range ceiling applied per file. See processing_lvl_2_survey.yaml."
+    description: "Range ceiling in metres; samples beyond it are dropped even if they hold data. Changing it recomputes the whole survey Sv."
 
-  # Shared by levels 2b, 3 and 5.
+  # Shared by levels 2b, 3 and 5; wire all three from this one input.
   ping_time_bin:
     type: str
     default: "10s"
-    description: "Ping time bin of the dive grid, used by levels 2b, 3 and 5."
+    description: >
+      Ping-time bin width of the MVBS grid, as a duration string such as
+      "10s". The sparse-bin mask, the cell statistics and the SVCode duration
+      tables use the same bin.
 
 steps:
 

@@ -1,30 +1,16 @@
 # HB1603 survey-level recipe, tuned for a bandwidth-limited gs:// cache.
-#
-# Parallel variant of survey_recipe.yaml. Most of a baseline bucket run was
-# checkpoint upload rather than compute, so this recipe trims uploads first and
-# adds parallelism second:
-#
-#   1. No checkpoint on ep_add_splitbeam_angle. It was the largest upload in the
-#      run for almost no compute, and its arrays are re-uploaded inside
-#      remove_noise anyway.
-#   2. No checkpoint on combine_raw. Per file it only materializes what read_raw
-#      just wrote, and compute_sv downstream is checkpointed.
-#   3. temp_dir on local disk, set in the config file. Its zarr intermediates
-#      are deleted at the end of the run, so round-tripping them through the
-#      bucket is pure cost. Reverse it if the workstation is disk-constrained.
-#   4. rechunk_before_noise added, which cuts remove_noise's compute.
-#   5. Per-file map_over through ingest, Sv and masking, with the fan-in after
-#      Sv, so --executor dask can overlap the per-file network I/O.
-#
-# --executor dask is worth trying here but measure it: a whole chain instance
-# runs as one task, so no per-file intermediate crosses a task boundary, but
-# whether concurrency helps depends on whether the uplink caps per stream.
+# Parallel variant of survey_recipe.yaml. A bucket run is mostly checkpoint
+# upload, so it drops the combine_raw and ep_add_splitbeam_angle checkpoints,
+# keeps temp_dir local (config file), rechunks before remove_noise, and maps
+# ingest, Sv and masking per file so --executor dask can overlap network I/O.
+# Measure dask before relying on it: it helps only if the uplink caps per stream.
+# user_recipe_parallel.yaml repeats these steps and adds the plots and level 4.
 #
 # Run:  aa-recipe run survey_recipe_parallel.yaml --cache-write-tier survey
 
 recipe:
   name: "processing_levels_pipeline_gcs_parallel"
-  description: "HB1603 GCS pipeline with per-file parallel ingest and upload-minimized checkpoints."
+  description: "HB1603 survey-level pipeline over raw files in a GCS bucket, levels 1 to 3, with per-file parallel ingest, Sv and masking and few checkpoint uploads."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -32,35 +18,43 @@ recipe:
 inputs:
   raw_input_folder:
     type: path
-    # Content-fingerprint the (remote) folder so the cache key tracks the file set
+    # Hash the folder's contents, not its location, so a local copy and the
+    # bucket give the same survey hash.
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./calibration_files/HB201607_cal"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
+  # Unused here: no step draws the line.
   line_file_path:
     type: path
     default: "./line_files/SpermWhaleClicks_click_data_HB1603_SpermWhaleDive_Span0.2_07252016_2120_UTC.csv"
+    description: "Line file drawn over the MVBS grid and echograms, such as a sperm whale click track (.csv) or an Echoview .evl line. A local path or a gs:// URL."
 
-  # Default display window shared by every plotting step in this pipeline
-  # You can override these by hardcoding values for a specific step or sub-recipe
+  # Display window for plotting steps, unused here since none run.
   min_depth:
     type: float
     default: 0
+    description: "Shallowest depth shown on the echograms, in metres."
   max_depth:
     type: float
     default: 1800
-  # With no defaults the echograms span the whole time range. Set either to a
-  # UTC timestamp, for example "2016-07-18T09:30", to window them instead.
+    description: "Deepest depth shown on the echograms, in metres. Unset uses the deepest depth in the data."
   time_min:
     type: str
+    description: "Start of the echogram window, as a UTC timestamp such as \"2024-10-15T12:30\". Unset starts at the first ping."
   time_max:
     type: str
+    description: "End of the echogram window, as a UTC timestamp such as \"2024-10-15T12:30\". Unset runs to the last ping."
   x_axis_units:
     type: str
     default: "datetime"
+    description: "Echogram x axis: \"datetime\" (UTC clock time), \"seconds\" from the first ping shown, \"pings\", \"meters\" travelled, or \"bins\" (MVBS only)."
   y_axis_units:
     type: str
     default: "meters"
+    description: "Echogram y axis: \"meters\", \"range_sample\", or \"bins\" (MVBS only)."
 
 
 steps:
@@ -69,7 +63,7 @@ steps:
     input_overrides:
       raw_input_folder: ${inputs.raw_input_folder}
       cal_input_folder: ${inputs.cal_input_folder}
-      # Data time range: clear both to process the whole bucket folder.
+      # Clear both to process the whole bucket folder.
       file_time_start: "2016-07-25T20:58"
       file_time_end: "2016-07-25T21:45"
       cruise_id: "HB1603"
@@ -82,81 +76,19 @@ steps:
       echodata: ${combine_raw.echodata}
       cal_params: ${extract_cal_params.cal_params}
       env_params: ${extract_cal_params.env_params}
-      # Fixed transducer depth below the waterline for the whole survey.
       depth_offset: 6
-      # seafloor mask
       seafloor_buffer_m: 100
-      # surface mask
       surface_mask_depth: 10.0
-      # parameters for echopype's remove_background_noise:
       range_sample_num: 10
       ping_num: 5
-      # Must stay below the window's real ping count (~516 here) or it clamps
-      # to a single chunk and silently does nothing.
+      # Must stay below the window's ping count (~516 here) or it is one chunk.
       noise_chunk_ping_time: 100
-
-  # - id: plot_sv_clean
-  #   op: plot_sv_echogram
-  #   regenerate: if-missing
-  #   inputs:
-  #     ds_Sv: ${remove_noise.ds_Sv}
-  #   params:
-  #     min_depth: ${inputs.min_depth}
-  #     max_depth: ${inputs.max_depth}
-  #     time_min: ${inputs.time_min}
-  #     time_max: ${inputs.time_max}
-  #     x_axis_units: ${inputs.x_axis_units}
-  #     y_axis_units: ${inputs.y_axis_units}
-  #     dpi: 100
 
   # Unchanged from survey_recipe.yaml: level 3 is survey-wide and its checkpoint
   # is cheap to upload.
   - include: sub_recipes/processing_lvl_3.yaml
     input_overrides:
       sv_clean_unmasked: ${remove_noise.ds_Sv}
-      # MVBS bin size:
       range_bin: "20m"
       ping_time_bin: "20s"
-      nan_threshold: 0.6 # mask bin if NAN's exceed this fraction of data in the cell
-
-  # - id: add_line_overlay
-  #   op: add_line_overlay
-  #   inputs:
-  #     ds: ${compute_mvbs.ds_MVBS}
-  #   params:
-  #     line_file_path: ${inputs.line_file_path}
-  #     line_name: "sw_dive_profile"
-
-  # - id: plot_mvbs
-  #   op: plot_sv_echogram
-  #   regenerate: if-missing
-  #   inputs:
-  #     ds_Sv: ${add_line_overlay.ds}
-  #     ds_Sv_source: ${mask_sparse.ds_Sv}
-  #   params:
-  #     min_depth: ${inputs.min_depth}
-  #     max_depth: ${inputs.max_depth}
-  #     time_min: ${inputs.time_min}
-  #     time_max: ${inputs.time_max}
-  #     x_axis_units: ${inputs.x_axis_units}
-  #     y_axis_units: ${inputs.y_axis_units}
-  #     dpi: 50
-  #     overlay_lines:
-  #       - var: "sw_dive_profile_fit"
-  #         style:
-  #           color: "red"
-  #           linewidth: 3.5
-
-  # - include: sub_recipes/processing_lvl_4.yaml
-  #   input_overrides:
-  #     mvbs_with_lines: ${add_line_overlay.ds}
-  #     echodata: ${combine_raw.echodata}
-  #     overlay_line_var: "sw_dive_profile"
-  #     sv_clean_unmasked: ${remove_noise.ds_Sv}
-  #     cell_stats_sv: ${compute_cell_stats.ds_Sv}
-  #     min_depth: ${inputs.min_depth}
-  #     max_depth: ${inputs.max_depth}
-  #     time_min: ${inputs.time_min}
-  #     time_max: ${inputs.time_max}
-  #     x_axis_units: ${inputs.x_axis_units}
-  #     y_axis_units: ${inputs.y_axis_units}
+      nan_threshold: 0.6

@@ -1,53 +1,35 @@
-# RL2307 Calibration, phase 2: map raw channels to calibration data
+# RL2307 calibration, phase 2: map raw channels to calibration data.
+# Runs after calibration_standardize.yaml, sharing its cache root, so only the
+# mapping runs.
 #
-# Runs after calibration_standardize.yaml, sharing its cache root, so the four
-# stages both files declare are already done and only the mapping runs.
+# The four steps before build_cal_mapping are copied verbatim from
+# calibration_standardize.yaml and must stay that way: once the copies drift,
+# this recipe stops reusing the raw scan and reads every file again, with no
+# error. tests/test_calibration_phase_recipes.py asserts the hashes match; run
+# it after editing either file.
 #
-# THE FOUR STEPS BEFORE build_cal_mapping ARE COPIED VERBATIM FROM
-# calibration_standardize.yaml, and they must stay that way. Cache entries are
-# addressed by step hash, so the moment the two copies drift, this recipe stops
-# reusing the raw scan and reads every file again. Nothing in the recipe format
-# enforces it and the symptom is a slow run rather than an error, so
-# tests/test_calibration_phase_recipes.py asserts the hashes match. Run it
-# after editing either file.
-#
-# Two ways in, and they do not interfere:
-#
-#   LOCAL      Run it after phase 1 with nothing extra. standardize_cal is a
-#              cache hit, build_cal_mapping reads the folder on disk, and the
-#              existing conflict workflow is unchanged: with
-#              conflict_resolution "error" you delete the unwanted
-#              single-channel file and re-run, and "interactive" prompts.
-#
-#   A CALLER   Pass the reviewed channels from phase 1's single_channel_data
-#              back as override_channels. standardize_cal rewrites the folder
-#              from them, so the archived files match what gets mapped even in
-#              a container that starts with an empty outputs directory. Leave
-#              conflict_resolution at "report": rather than raising or
-#              prompting, the step returns its conflicts and writes no mapping
-#              file. Present them, then run again with calibration_choices
-#              filled in from the conflict ids.
+#   LOCAL      Run it after phase 1 with nothing extra. With "error", delete
+#              the unwanted single-channel file and re-run; "interactive"
+#              prompts.
+#   A CALLER   Pass phase 1's reviewed single_channel_data back as
+#              override_channels and set conflict_resolution to "report", which
+#              returns the conflicts and writes no mapping file. Present them,
+#              then run again with calibration_choices filled in.
 #
 # Artifacts land under <outputs_dir>/<calibration_outputs>/:
-#
-#   mapping_files/                     channel_mapping.yaml, <- REQUIRED BY NCEI
+#   mapping_files/                     channel_mapping.yaml (required by NCEI),
 #                                      calibration_configurations.yaml
-#   unused_calibration_files/          cal files no raw channel matched
+#   unused_calibration_files/          calibration files no raw channel matched
 #
-# Both phases must resolve to the SAME user_cache_dir and outputs_dir or the
-# sharing silently does not happen: the run config is discovered per recipe as
-# <recipe_stem>.config.yaml, so either keep the two config files identical or
-# pass --config explicitly.
+# Both phases must resolve to the same user_cache_dir and outputs_dir or the
+# cache is silently not shared: keep the two <recipe_stem>.config.yaml files
+# identical or pass --config explicitly.
 #
-# Once the mapping is clean, save_calibration.yaml (phase 3) writes the
-# mapping, the provenance and the standardized channel files to a directory
-# the survey keeps. The same three recipes are what the calibration service
-# exposes as its three HTTP calls. See calibration_service_api.md
-# in AA-SI_calibration/recipes/documentation/.
+# Once the mapping is clean, save_calibration.yaml (phase 3) archives it.
 #
 # Usage:
 #   aa-recipe run calibration_mapping.yaml
-#   aa-recipe run calibration_mapping.yaml --input conflict_resolution=interactive
+#   aa-recipe run calibration_mapping.yaml --input conflict_resolution=report
 
 recipe:
   name: "rl2307_calibration_mapping"
@@ -61,67 +43,76 @@ inputs:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/data/raw"
     fingerprint_mode: auto
-    description: "Folder of .raw files, read for channel configuration only."
+    description: >
+      Folder of raw .raw files, a local path or a gs:// URL, read for channel
+      configuration only.
   cal_input_folder:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Reuben_Lasker/RL2307/EK80/Calibration/RESULTS"
-    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80)."
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      a local path or a gs:// URL.
   calibration_outputs:
     type: str
     default: "calibration"
-    description: "Subdirectory under the run's outputs folder for the calibration artifacts."
+    description: >
+      Name of the subfolder of the run's outputs folder that calibration
+      artifacts are written to.
   cruise_id:
     type: str
     default: "RL2307"
-    description: "Recorded in every generated single-channel file so it stays traceable to the survey."
+    description: >
+      Cruise identifier, such as "HB1603", recorded in every generated
+      single-channel calibration file so it stays traceable to the survey.
   record_author:
     type: str
     default: "<Your Name>"
-    description: "Recorded as the author of every generated single-channel file."
+    description: >
+      Name recorded as the author of every generated single-channel
+      calibration file, and of any record averaged or merged while resolving
+      conflicts.
   file_time_start:
     type: str
     required: false
     # default: "2023-07-17T16:30:46"
-    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    description: >
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or after it
+      are scanned for calibration. Unset takes every file.
     warn_if_set: "Only raw files inside the time window are scanned. Leave it unset to scan every file in the folder."
   file_time_end:
     type: str
     required: false
     # default: "2023-07-18T19:50:19"
-    description: "Used to narrow file set down for Debugging purposes. Leave unassigned for full results."
+    description: >
+      Optional inclusive ISO datetime, for debugging, matched to the
+      D{YYYYMMDD}-T{HHMMSS} time in each raw file name; files at or before it
+      are scanned for calibration. Unset takes every file.
     warn_if_set: "Only raw files inside the time window are scanned. Leave it unset to scan every file in the folder."
   override_channels:
     type: dict
     required: false
     description: >
-      Standardized channels to write instead of parsing the manufacturer files,
-      as returned on standardize_cal's single_channel_data output. This is how a
-      reviewed and edited set comes back from a caller that never sees the
-      folder. Declared here, and left unset, in both phase recipes: an unset
-      value hashes identically, so standardize_cal still shares its cache entry,
-      and only a caller actually supplying edits diverges.
+      Reviewed standardized channels, in the shape of the single_channel_data
+      output, written in place of parsing the manufacturer files. Unset parses
+      the files.
   conflict_resolution:
     type: str
     default: "interactive"
     description: >
-      What to do when one raw channel matches several calibration files.
-      "report" (the default here, for a caller with no terminal) returns the
-      conflicts and writes no mapping file. "error" lists them and stops, which
-      is the local workflow: delete the unwanted single-channel file and re-run.
-      "interactive" prompts on the terminal and fails, before moving any file,
-      if the run has no interactive input.
+      What to do when one raw channel matches several calibration files:
+      "error" lists the conflicts and stops; "interactive" prompts on the
+      terminal, so it cannot run unattended. "report" returns the conflicts
+      and writes no mapping.
+  # An average or merge becomes a new single-channel file. A merge item may
+  # itself be {"average": [keys]}.
   calibration_choices:
     type: dict
     required: false
     description: >
-      Conflict decisions from a previous "report" run, mapping a conflict id to
-      the calibration key to keep, to a list of candidate keys to average, or
-      to {"merge": [keys]} to merge them as the EK80 software does, the first
-      key used wherever its sphere is valid and the later ones filling the
-      rest. A merge item may itself be {"average": [keys]}. An average or
-      merge becomes a new single-channel file. Applied before the chosen mode
-      runs, so a partial map resolves what it covers and the rest is reported
-      again.
+      Answers to a "report" run: each conflict id maps to the calibration key
+      to keep, a list of keys to average, or {"merge": [keys]} to merge them
+      in priority order, EK80 style. Unanswered conflicts are reported again.
 
 steps:
 
@@ -134,9 +125,8 @@ steps:
       file_time_start: ${inputs.file_time_start}
       file_time_end: ${inputs.file_time_end}
 
-  # One instance per raw file, content-addressed by that file's path, so an
-  # interrupted scan resumes from what it already read.
-  # verbose is off because one banner per file buries the rest of the log.
+  # One instance per raw file, so an interrupted scan resumes from what it
+  # already read. verbose is off: one banner per file buries the log.
   - id: scan_raw_config
     op: read_raw_file_config
     map_over: ${initial_setup.raw_file_paths}
@@ -144,11 +134,9 @@ steps:
     params:
       raw_file_path: ${_item}
       verbose: false
-      # Read a growing prefix rather than all ~1 GiB: the scan starts at 8 MiB
-      # and doubles to this cap, stopping once every channel's Parameter
-      # datagram is in hand. CW files settle on the first rung; RL2307's ~1 GiB
-      # FM files sit behind much larger RAW3 payloads and climb. A file that
-      # never settles within the cap is read whole.
+      # Reads a growing prefix, 8 MiB doubling to this cap, until every
+      # channel's Parameter datagram is in hand. RL2307's FM files climb past
+      # the first rung; a file that never settles is read whole.
       max_scan_bytes: 134217728  # 128 MiB
 
   - id: record_raw_configs
@@ -161,15 +149,10 @@ steps:
     params:
       output_base: ${initial_setup.calibration_output_dir}
 
-  # regenerate: if-missing is safe here only because this step records its
-  # output directory: wiping the folder rebuilds it, deleting one file inside
-  # it does not. The conflict workflow depends on that distinction.
-  #
-  # It is also what makes the two-phase split work across containers. A second
-  # run starting with an empty outputs directory finds the recorded folder
-  # missing and rebuilds it, from override_channels when a caller supplied
-  # edits and from the manufacturer files otherwise, so the mapping step always
-  # reads a folder that matches what it is about to map.
+  # regenerate: if-missing is safe only because this step records its output
+  # directory: wiping the folder rebuilds it, deleting one file inside does
+  # not, which the conflict workflow relies on. A run in a fresh container
+  # rebuilds the folder, from override_channels or the manufacturer files.
   - id: standardize_cal
     op: standardize_calibration_files
     checkpoint: always
@@ -223,25 +206,16 @@ outputs:
     step_id: build_cal_mapping
     output_name: single_channel_data
     description: >
-      The standardized channels the mapping was actually built from, carrying
-      their final file keys after any edits were applied, plus any record this
-      run averaged or merged from several of them. Every key in mapping_dict
-      names one of these.
+      The standardized channels the mapping was built from, with their final
+      keys, plus any record this run averaged or merged. Every key in
+      mapping_dict names one of these.
   provenance:
     step_id: build_cal_mapping
     output_name: provenance
     description: >
-      What calibration was applied where, and why, per channel. Runs of raw
-      files that behaved the same way collapse into one segment carrying a
-      time range, so a cruise of thousands of files reports as a handful of
-      segments per channel. Each says whether the calibration matched
-      outright, matched only because a tolerance was widened, or matched
-      nothing, and for anything but a clean match names the field and the two
-      values behind it.
-
-      JSON-safe, so a server can return it to a client without reading the
-      file off disk. Pair it with conflicts: conflicts is what the caller has
-      to answer, this is what the run did.
+      Per-channel account of what calibration was applied where, as time-range
+      segments. Each says whether it matched outright, only with a widened
+      tolerance, or not at all, and why. JSON-safe, for returning to a client.
   provenance_path:
     step_id: build_cal_mapping
     output_name: provenance_path

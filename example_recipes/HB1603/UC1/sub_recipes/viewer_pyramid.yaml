@@ -4,52 +4,37 @@
 #   build_pyramid           mapped over those ranges, one pyramid per segment
 #   survey_echogram_store   collected, concatenated per level, checkpointed
 #
-# Not a processing level: it changes no data, it re-expresses it. Level 0 of the
-# pyramid is the input as given, and level k merges 2**k columns into one by
-# averaging in linear space, so an overview of the whole survey reads a small
-# array and a close-up reads the real one.
-#
-# It takes any gridded Sv dataset, which is what lets the same file build the
-# survey context store today and a per-dive analysis store later.
+# Level 0 of the pyramid is the input as given; level k averages 2**k columns
+# into one in linear space. It takes any gridded Sv dataset, so it can build
+# the survey context store or a per-dive analysis store.
 #
 # WHY THE RANGES ARE NOT ARBITRARY
 #
-#   A segment reduces to a whole number of cells at every level only when its
-#   column count is a multiple of 2**(levels-1). Cut anywhere else and one cell
-#   in the middle of the survey averages fewer columns than its neighbours,
-#   every coarse level after it is shifted, and the viewer draws the wrong
-#   water while looking entirely plausible. plan_pyramid_segments puts the
-#   cuts on that grid and leaves the remainder in the last segment, where a
-#   short final cell is what a serial build produces anyway. The segmented
-#   result is the same array as the serial one, asserted in AA-SI_EchogramGL's
-#   tests/test_ops.py.
+#   A segment reduces to whole cells at every level only when its column count
+#   is a multiple of 2**(levels-1). Cut elsewhere, one mid-survey cell averages
+#   fewer columns and every coarser level shifts, plausibly but wrongly.
+#   plan_pyramid_segments cuts on that grid, so the segmented build equals the
+#   serial one (asserted in AA-SI_EchogramGL's tests/test_ops.py).
 #
 # SIZING A SEGMENT
 #
-#   A segment is held whole while its levels are reduced. Measured on this
-#   grid, five channels by 905 depth bins, a build peaks at about six times its
-#   level-zero size: roughly 1.7 GiB for 16,384 columns. Every segment can run
-#   at once under the dask executor, so the figure that has to fit in memory is
-#   that peak times the worker count.
+#   A build peaks at about six times its level-zero size: roughly 1.7 GiB for
+#   16,384 columns of five channels by 905 depth bins. Under the dask executor
+#   every segment can run at once, so that peak times the worker count must fit
+#   in memory.
 #
 # WHERE THE STORE ENDS UP
 #
-#   survey_echogram_store is checkpointed, so the pyramid lands in the cache
-#   under that step's content address as one zarr group with a subgroup per
-#   level. Nothing has to be published for it to be looked at. Find
-#   pyramid.zarr under <cache>/survey_echogram_store/ and point the viewer at
-#   it, local path or gs:// URL:
+#   survey_echogram_store is checkpointed, so the pyramid lands in the cache as
+#   pyramid.zarr under <cache>/survey_echogram_store/. Point the viewer at it,
+#   local path or gs:// URL; a bucket needs the gcs extra and application
+#   default credentials (AA-SI_EchogramGL/docs/GCS.md):
 #
 #     aa-echogram validate <.../pyramid.zarr>
 #     aa-echogram serve --store <.../pyramid.zarr>
 #
-#   Serving from a bucket needs the gcs extra and application-default
-#   credentials; see AA-SI_EchogramGL/docs/GCS.md.
-#
-# NEEDS aa-si-echogram-gl IN THE RUN ENVIRONMENT
-#
-#   The three ops live in AA-SI_EchogramGL, not in the recipe manager:
-#     pip install -e <path to>/AA-SI_EchogramGL
+# The three ops live in AA-SI_EchogramGL, which must be in the run environment:
+#   pip install -e <path to>/AA-SI_EchogramGL
 
 recipe:
   name: "hb1603_viewer_pyramid"
@@ -59,37 +44,31 @@ recipe:
   schema_version: "1"
 
 inputs:
+  # Wire it to rechunk_viewer_mvbs.ds_Sv.
   gridded_sv:
     type: Dataset
-    description: >
-      Sv on one shared grid with a one dimensional vertical coordinate, such as
-      an MVBS store. Wire it to rechunk_viewer_mvbs.ds_Sv.
+    description: "Sv on one shared grid with a one dimensional vertical coordinate, such as the survey MVBS store."
   pyramid_range_var:
     type: str
     default: "depth"
     description: >
-      Vertical coordinate the store's geometry is built from. depth for a
-      gridded product. Full-resolution Sv would need echo_range, because depth
-      carries heave and fails the alignment check; a grid has no heave in it.
+      Vertical coordinate of the pyramid store: "depth" for a gridded product,
+      "echo_range" for full-resolution Sv, where depth carries heave.
   pyramid_levels:
     type: int
     default: 8
-    description: >
-      Levels to build, halving the column axis each time. Eight reduce it by
-      128 at the coarsest, about 3000 columns for this survey at 10 s bins.
+    description: "Pyramid levels to build, halving the column axis each time; eight reduce it by 128 at the coarsest."
+  # See SIZING A SEGMENT in the header before raising it.
   pyramid_segment_columns:
     type: int
     default: 16384
-    description: >
-      Rough segment size, rounded down onto the 2**(levels-1) grid by the
-      planner. See SIZING A SEGMENT above before raising it.
+    description: "Rough segment size in columns, rounded down onto the pyramid's grid. Each segment is held in memory while it builds, about 1.7 GiB at the default."
   pyramid_aggregation:
     type: str
     default: "linear_mean"
     description: >
-      How columns are merged. linear_mean averages in linear space and is right
-      for a picture of biomass. max keeps a single strong target that a mean
-      would dilute.
+      How columns are merged: "linear_mean" averages in linear space, right for
+      biomass; "max" keeps a single strong target a mean would dilute.
 
 steps:
 

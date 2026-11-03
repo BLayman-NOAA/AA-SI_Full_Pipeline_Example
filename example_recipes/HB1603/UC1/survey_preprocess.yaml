@@ -1,8 +1,7 @@
-# HB1603 Survey Preprocess - build the shared survey store, and nothing else
+# HB1603 survey preprocess: build the shared survey store, and nothing else.
 #
-# The expensive pass, run once for the cruise. It exists as its own entrypoint
-# so the shared tier can be built and curated by one person, deliberately,
-# rather than written by every analyst's run.
+# The expensive pass, run once per cruise, as its own entrypoint so the shared
+# tier is built and curated deliberately rather than by every analyst's run.
 #
 #   [per file]  read_raw -> ... -> crop_survey_range            (the Sv)
 #   [per file]  masks -> noise -> mask_sparse -> compute_mvbs   (the grid)
@@ -10,34 +9,21 @@
 #               merge_survey_cell_stats
 #
 # It is exactly the survey tier full_analysis.yaml includes, with the same
-# inputs. That is the point: run this, then run the analysis, and every survey
-# step there is a cache hit. The identity is checked by a test.
+# inputs (checked by a test), so after this run every survey step there is a
+# cache hit. Curate it into the shared tier; survey_cache_dir comes from
+# aa-recipe.config.yaml:
 #
-# Curate it into the shared tier (reads and writes the survey tier only):
 #   aa-recipe run survey_preprocess.yaml --executor dask --dask-workers 16 \
 #       --cache-write-tier survey
 #
-# survey_cache_dir comes from aa-recipe.config.yaml.
+# SCALE AND RESUMPTION
 #
-# SCALE, INTERRUPTION AND RESUMPTION
-#
-#   HB1603 is 3322 files and roughly 175 GB of raw. Run it whole. Do NOT slice
-#   it by narrowing file_time_start / file_time_end: query_ncei is a parent of
-#   every step here, so a narrowed query moves every hash beneath it and its
-#   per-file checkpoints are not the ones the whole-cruise run, or any
-#   analysis, will look for.
-#
-#   An interrupted run is cheap to resume instead. The chain resumes each file
-#   from its latest checkpoint: a file whose survey_file_mvbs and
-#   survey_cell_stats exist is two checkpoint loads and nothing else, and a
-#   file that got as far as crop_survey_range restarts from there rather than
-#   from raw. Once the two fan-ins have been written, a rerun prunes the whole
-#   chain without dispatching a single file.
-#
-#   The one-time cost after the per-file work is the fan-in itself: the client
-#   loads each per-file MVBS and cell-stats checkpoint to concatenate them,
-#   which on this cruise is about an hour of sequential bucket reads. It is
-#   paid again only when a survey-level checkpoint is invalidated.
+#   3322 files, about 175 GB of raw. Run it whole: narrowing the query window
+#   moves every hash beneath it, so its checkpoints would not be the ones any
+#   analysis looks for. An interrupted run resumes each file from its latest
+#   checkpoint. The fan-in then loads every per-file checkpoint, about an hour
+#   of sequential bucket reads, paid again only when a survey-level checkpoint
+#   is invalidated.
 
 recipe:
   name: "hb1603_survey_preprocess"
@@ -50,29 +36,35 @@ inputs:
   cal_input_folder:
     type: path
     default: "../calibration_files/HB201607_cal"
-    description: "Manufacturer .cal files. The one input NCEI cannot supply."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_output_dir:
     type: path
     default: "./outputs/calibration"
-    description: "Root for the calibration artifacts."
+    description: "Root folder the calibration artifacts are written under."
+  # crop_max_range_m, mvbs_range_var_max and survey_chunk_ping_time must match
+  # full_analysis.yaml exactly, or the analysis misses this cache.
   crop_max_range_m:
     type: float
     default: 1800.0
-    description: "Fixed range ceiling. Must match full_analysis.yaml exactly."
+    description: "Range ceiling in metres; samples beyond it are dropped even if they hold data. Changing it recomputes the whole survey Sv."
+  # The crop is on echo_range and depth adds HB1603's ~8.9 m transducer depth,
+  # so an 1800 m crop reaches ~1809 m; 1810m is the next 2 m bin edge. Raise
+  # both together.
   mvbs_range_var_max:
     type: str
     default: "1810m"
     description: >
-      Depth the per-file grid is built out to, as the unit string echopype
-      parses. Pinned rather than measured, so every file shares one depth axis
-      and the fan-in has nothing to pad. Must clear the deepest depth the crop
-      can produce: the crop is on echo_range and depth adds the transducer's
-      own depth on top, so an 1800 m ceiling reaches about 1809 m and 1810 m
-      is the next 2 m bin edge. Must match full_analysis.yaml exactly.
+      Deepest depth the MVBS grid covers, such as "1810m", pinned so every
+      file shares one depth axis. It must clear the range crop plus the
+      transducer depth, or the deepest bins are dropped.
+  # On the MVBS grid one ping_time index is one ping_time_bin.
   survey_chunk_ping_time:
     type: int
     default: 1000
-    description: "Ping-time chunk of the shared store. Must match full_analysis.yaml."
+    description: >
+      Ping-time chunk size of the shared survey store, which sets the
+      granularity a window reads at. Size it near the window users usually ask
+      for.
 
 steps:
 

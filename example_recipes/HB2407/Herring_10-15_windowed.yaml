@@ -1,14 +1,11 @@
 # HB2407 Herring 10-15, analysis over a window of the shared survey Sv store.
+# Levels 1 and 2a are included as in survey_preprocess.yaml, so they hash
+# identically and come back as cache hits; select_window narrows the shared
+# store to this analyst's segment.
 #
-# The user half of the survey/user split. Levels 1 and 2a are included verbatim
-# from survey_preprocess.yaml so they hash identically and come back as cache
-# hits, select_window narrows the shared store to this analyst's segment, and
-# everything below that is this analyst's own parameters.
-#
-# Keep the two survey-level includes byte-identical to survey_preprocess.yaml
-# and never pass them ${inputs.file_time_start}: a window wired in that high
-# re-keys every checkpoint below it and the shared store gets rebuilt per
-# analyst. The window belongs on select_window and nowhere else.
+# Never pass the survey-level includes ${inputs.file_time_start}: a window
+# wired in that high re-keys every checkpoint below it and the shared store is
+# rebuilt per analyst.
 #
 # Usage:
 #   aa-recipe run Herring_10-15_windowed.yaml --survey-cache-dir gs://.../survey_cache
@@ -25,57 +22,94 @@ inputs:
   raw_input_folder:
     type: path
     fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
   cal_input_folder:
     type: path
     default: "./HB2407_calibration_files"
+    description: >
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      a local path or a gs:// URL.
   crop_max_range_m:
     type: float
     default: 250.0
+    description: >
+      Range ceiling in metres; samples beyond it are dropped even if they hold
+      data. With other crop criteria set, the shallowest cut wins. Unset
+      derives the crop from the data.
   survey_chunk_ping_time:
     type: int
     default: 2000
+    description: >
+      Ping-time chunk size of the shared survey store, which sets the
+      granularity a window reads at. Size it near the window users usually ask
+      for.
 
   # User-level. Vary these freely; nothing above is affected.
   seabed_line_folder:
     type: path
     default: "gs://ggn-nmfs-aa-prod-1-data/HDD/Henry_B_Bigelow/HB2407/Auxiliary/EV_seabedlines"
+    description: >
+      Folder of Echoview .evl seabed line exports, a local path or a gs://
+      URL. The files covering the time window are combined into the seafloor;
+      a single .evl file is read whole.
 
-  # This analyst's segment. Selects the ping_time window out of the shared
-  # store and the .evl line files to read.
+  # This analyst's segment. Bound the pings, not the filename stamps: the last
+  # file runs about 55 minutes past its own stamp.
   file_time_start:
     type: str
     default: "2024-10-15T13:38:52"
+    description: >
+      Inclusive ISO UTC datetime start of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the start open.
   file_time_end:
     type: str
     default: "2024-10-15T23:43:36"
+    description: >
+      Inclusive ISO UTC datetime end of this analysis segment. Selects its
+      pings from the shared survey Sv and the seabed line files to read; unset
+      leaves the end open.
 
-  # Default display window shared by every plotting step in this pipeline.
+  # Display window shared by every plotting step; hardcode a value in a step
+  # or sub-recipe to override it there.
   min_depth:
     type: float
     default: 0
+    description: "Shallowest depth shown on the echograms, in metres."
   max_depth:
     type: float
     default: 25
-  # No defaults span the whole time range. Set either to a UTC timestamp, like
-  # the file_time_start/file_time_end above, to window the echograms.
+    description: >
+      Deepest depth shown on the echograms, in metres. Unset uses the deepest
+      depth in the data.
   time_min:
     type: str
     # default: "2024-10-15T00:00"
+    description: >
+      Start of the echogram window, as a UTC timestamp such as
+      "2024-10-15T12:30". Unset starts at the first ping.
   time_max:
     type: str
     # default: "2024-10-15T01:00"
+    description: >
+      End of the echogram window, as a UTC timestamp such as
+      "2024-10-15T12:30". Unset runs to the last ping.
   x_axis_units:
     type: str
     default: "datetime"
+    description: >
+      Echogram x axis: "datetime" (UTC clock time), "seconds" from the first
+      ping shown, "pings", "meters" travelled, or "bins" (MVBS only).
   y_axis_units:
     type: str
     default: "meters"
+    description: >
+      Echogram y axis: "meters", "range_sample", or "bins" (MVBS only).
 
 
 steps:
 
-  # Survey level. Keep byte-identical to survey_preprocess.yaml, with no
-  # ${inputs.file_time_start} anywhere in these two blocks.
+  # Survey level. Keep these two includes identical to survey_preprocess.yaml.
 
   - include: sub_recipes/processing_lvl_1_survey.yaml
     input_overrides:
@@ -129,7 +163,7 @@ steps:
       # MVBS bin size:
       range_bin: "2m"
       ping_time_bin: "2s"
-      nan_threshold: 0.95 # mask bin if NAN's exceed this fraction of data in the cell
+      nan_threshold: 0.95
 
   - id: plot_mvbs
     op: plot_sv_echogram
@@ -146,10 +180,8 @@ steps:
       y_axis_units: ${inputs.y_axis_units}
       dpi: 50
 
-  # echodata and seafloor_depth are left unwired: level 4 only needs them for
-  # the 'seafloor_depth' and 'altitude' features, which features: [cell_cv]
-  # does not use. detect_seafloor is survey-wide here, so
-  # ${detect_seafloor.seafloor_depth} can be wired in directly if you want them.
+  # echodata and seafloor_depth stay unwired: features: [cell_cv] needs neither.
+  # detect_seafloor is not mapped here, so its seafloor_depth can be wired directly.
   - include: sub_recipes/processing_lvl_4.yaml
     input_overrides:
       mvbs: ${compute_mvbs.ds_MVBS}

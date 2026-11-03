@@ -3,10 +3,9 @@
 # the raw files instead of the manufacturer calibration files.
 #
 # A variant of dive_analysis.yaml built to line up with the NEFSC reference
-# analysis (EK_CodeSv.py) once that script's depth-offset bug is fixed and
-# background noise removal is added to it. From the dive windows down the two
-# recipes are the same level files with the same values; they differ only in
-# where the per-file Sv comes from.
+# analysis (EK_CodeSv.py) once that script's depth-offset bug is fixed and it
+# gains background noise removal. From the dive windows down the two recipes
+# share level files and values; only the per-file Sv differs.
 #
 #   aa-recipe run dive_analysis_raw_cal.yaml --executor dask --dask-workers 16
 #
@@ -22,48 +21,28 @@
 #
 # WHAT DIFFERS FROM dive_analysis.yaml
 #
-#   Calibration. compute_sv is handed nothing, so echopype reads the gain, sa
-#   correction, equivalent beam angle, sound speed and absorption each file
-#   recorded. No .cal file is read, no single-channel files are written and no
-#   mapping is built. After the 18 July calibration the raw gains equal the
-#   .cal values; before it they differ by 0.1 dB at 18 kHz and 0.5 dB at
-#   38 kHz. The environment differs on every date the operators changed sound
-#   speed, which moves range by up to 1.4%.
+#   Calibration: compute_sv gets nothing, so echopype uses each file's recorded
+#   gains, sound speed and absorption. Before the 18 July calibration the raw
+#   gains differ from the .cal values by 0.1 dB at 18 kHz and 0.5 dB at
+#   38 kHz; the recorded sound speeds move range by up to 1.4%.
 #
-#   Depth. The recorded transducer depth, 6 or 9 m on the dive dates, without
-#   heave, added once in level 2b. dive_analysis.yaml's survey Sv carries
-#   transducer depth plus heave and is then re-referenced to 0.0 for the
-#   reference comparison; here the value is the file's own, so nothing has to
-#   be undone.
+#   Depth: the recorded transducer depth, 6 or 9 m on the dive dates, without
+#   heave, added once in level 2b.
 #
-#   Scope. The survey's per-file Sv cannot be reused, so only the dive files
-#   are read: the 24 the dive configs name, out of 3322. The catalogue query
-#   itself keeps only those, through its file_names param, so its raw_urls
-#   output is the per-file list and the chain maps over it directly.
-#   Everything from the query down is this recipe's own cache.
-#
-# WHAT THIS RUN COSTS
-#
-#   The first run streams 24 raw files from NCEI, about 1.2 GB, converts them
-#   and computes Sv: tens of minutes, not the hours of a survey pass.
-#   Every per-file product is checkpointed, so an interrupted run resumes and
-#   a rerun with a changed user-level value re-runs only from that level. The
-#   dive plan is a cache hit from dive_analysis.yaml; the query re-runs, since
-#   its file_names param makes it a different step, and takes seconds.
+#   Scope: only the 24 dive files are read, out of 3322; the catalogue query
+#   keeps them through its file_names param. Everything from the query down is
+#   this recipe's own cache. The first run streams about 1.2 GB and takes tens
+#   of minutes; every per-file product is checkpointed.
 #
 # THE SHARED LEVEL FILES ARE TOLD WHAT TO MAP OVER
 #
-#   Levels 1, 2b and 3 are the same files dive_analysis.yaml includes. Each is
-#   passed per_file_source: ${query_ncei.raw_urls}, which here is the dive
-#   files' URLs, and level 2b is passed sv_source: ${crop_dive_range.ds_Sv}.
-#   Every per-file include must get the same per_file_source or the chain
-#   splits, and nothing non-mapped may be declared between the level 1 and
-#   level 3 includes.
+#   Levels 1, 2b and 3 get per_file_source: ${query_ncei.raw_urls}, here the
+#   dive files, and level 2b gets sv_source: ${crop_dive_range.ds_Sv}. Every
+#   per-file include needs the same per_file_source, and nothing non-mapped may
+#   be declared between the level 1 and level 3 includes.
 #
-# Each level file documents its own steps and carries its own inputs. A value
-# passed here as a literal is not reachable with --input; edit it here.
-#
-# Sanity-check the shape before a long run:
+# Literal values here are not reachable with --input; edit them here. Check
+# the shape before a long run:
 #   aa-recipe dry-run dive_analysis_raw_cal.yaml --visualize
 
 recipe:
@@ -75,24 +54,20 @@ recipe:
 
 inputs:
 
-  # --- Shared by levels 2b, 3 and 5 ----------------------------------------
+  # Shared by levels 2b, 3 and 5; wire all three from this one input.
   ping_time_bin:
     type: str
     default: "10s"
     description: >
-      Ping-time bin of the per-dive grid. Level 2b widens each dive window to
-      whole bins of this width so the first and last bins of a dive are
-      averaged over all of their pings, level 3 grids on it, and level 5
-      counts one bin of this length per ping in the duration tables.
+      Ping-time bin width of the MVBS grid, as a duration string such as
+      "10s". The sparse-bin mask, the cell statistics and the SVCode duration
+      tables use the same bin.
 
 steps:
 
-  # The 13 dives in the analysis: every localized dive HB1603 recorded except
-  # SWD_20160703-OE20, whose dive data is incorrect. Listed as the set that is
-  # included, so the population is stated outright and a label no config
-  # provides stops the run instead of quietly shrinking the study.
-  # SWD_20160707-OE20-OE29-OE32 is not a fourteenth dive: it is a combined view
-  # of three dives that each have their own config, and it has no 99% lines.
+  # Every localized HB1603 dive except SWD_20160703-OE20, whose dive data is
+  # incorrect. SWD_20160707-OE20-OE29-OE32 is a combined view of three listed
+  # dives, not a dive of its own.
   - include: sub_recipes/dive_plan.yaml
     input_overrides:
       json_dir: "./Auxiliary/JSON_Files"
@@ -113,7 +88,7 @@ steps:
         - "SWD_20160814-OE09"
         - "SWD_20160814-OE44"
 
-  # --- Raw-calibration levels -----------------------------------------------
+  # Raw-calibration levels
 
   # The survey's query with one addition: it keeps only the dive files.
   - include: sub_recipes/processing_lvl_0_raw_cal.yaml
@@ -131,7 +106,7 @@ steps:
       # the seabed line.
       crop_max_range_m: null
 
-  # --- User levels: the same files and values as dive_analysis.yaml --------
+  # User levels: the same files and values as dive_analysis.yaml
 
   - include: sub_recipes/processing_lvl_2_user.yaml
     input_overrides:
@@ -140,8 +115,7 @@ steps:
       dive_windows: ${plan_dives.windows}
       ping_time_bin: ${inputs.ping_time_bin}
       # The only add_depth on this path: the file's recorded transducer depth,
-      # without heave, computed in level 2a. See DEPTH IS RE-ADDED HERE in the
-      # level file. 0.0 would give range from the transducer instead.
+      # without heave. 0.0 would give range from the transducer instead.
       dive_depth_offset: ${compute_transducer_depth.transducer_depth}
       surface_depth_m: 10.0
       frequencies_to_mask: [70, 120, 200]
@@ -160,11 +134,9 @@ steps:
       range_bin: "2m"
       range_var: "depth"
       nan_threshold: 0.99
-      # Pinned so every file shares one depth axis. The dives are analysed
-      # over the full recorded water column down to the seabed line, and
-      # HB1603 recorded to 2960-3003 m of range; with dive_depth_offset 0.0
-      # depth equals range, so 3010m clears every file. Bins below a file's
-      # seabed are empty and the clustering drops them.
+      # Clears HB1603's deepest recorded range, 2960 to 3003 m. Depth here adds
+      # the 6 or 9 m transducer depth, so the last few metres of the deepest
+      # files fall past it; they lie below the seabed and are masked anyway.
       mvbs_range_var_max: "3010m"
       dive_chunk_ping_time: 1000
 

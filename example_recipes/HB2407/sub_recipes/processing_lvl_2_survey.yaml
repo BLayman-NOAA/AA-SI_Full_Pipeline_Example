@@ -1,27 +1,18 @@
-# Processing level 2a (survey): per-file Sv and depth, then the survey fan-in.
-#
-# The survey half of level 2, and the boundary of the shared artifact. It runs
-# once per cruise; every user recipe includes it verbatim, hits the cache, and
-# picks up from merge_survey_sv.
+# Processing level 2a, survey: per-file Sv and depth, then the survey fan-in.
+# The boundary of the shared artifact: it runs once per cruise, and every user
+# recipe includes it verbatim, hits the cache, and picks up from merge_survey_sv.
 #
 #   [per file] compute_sv -> compute_transducer_depth -> ep_add_depth
 #              -> crop_range
 #   [fan-in]   merge_survey_sv, concat along ping_time
 #   [survey]   rechunk_survey_sv, the shared chunked Sv store
 #
-# The merge sits after ep_add_depth because everything above it is a property of
-# the raw data and its calibration, not something an analyst varies, and because
-# the depth steps need this file's EchoData. Seabed detection, masking, noise
-# removal and MVBS live in processing_lvl_2_user.yaml and below.
+# Everything above the merge is a property of the raw data and its calibration,
+# not something an analyst varies. Seabed, masking, noise removal and MVBS live
+# in processing_lvl_2_user.yaml and below.
 #
-# The crop runs per file with a fixed ceiling. Concatenating along ping_time
-# needs every segment to share a range_sample length, and the data-driven crop
-# modes would each pick a different depth per file, leaving merge_datasets to
-# NaN-pad the difference into echo_range.
-#
-# ep_add_splitbeam_angle is omitted: HB2407's calibration mapping carries no
-# angle_sensitivity, so echopype raises TypeError, and nothing downstream uses
-# split-beam angles.
+# ep_add_splitbeam_angle is omitted: HB2407's calibration mapping has no
+# angle_sensitivity, so echopype raises. Nothing downstream uses the angles.
 #
 # Must be included immediately after processing_lvl_1_survey.yaml: its steps
 # continue that file's mapped chain.
@@ -36,49 +27,53 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Per-file EchoData object from the survey raw ingest stage."
+    description: "One file's raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
   cal_params:
     type: dict
-    description: "Calibration parameters selected for this file."
+    description: >
+      Calibration values for each channel of this file, taken from the
+      standardized calibration mapping and applied when computing Sv.
   env_params:
     type: dict
-    description: "Environmental parameters selected for this file."
+    description: >
+      Environmental values for each channel of this file, such as sound speed
+      and absorption, taken from the standardized calibration mapping and
+      applied when computing Sv.
   datum_correction_m:
     type: float
     default: 0.0
     description: >
-      Metres added to the file's recorded drop keel offset to reach depth below
-      the waterline. 0 takes the recorded offset as already waterline referenced.
+      Metres added to each file's recorded drop keel offset to give depth below
+      the waterline; positive pushes the transducer deeper. 0 takes the
+      recorded offset as waterline referenced.
   use_heave:
     type: bool
     default: true
-    description: "Add the per-ping platform heave term to transducer depth."
+    description: "Add the per-ping platform heave to transducer depth. False holds the static keel depth on every ping."
   heave_sign:
     type: float
     default: 1.0
     description: >
-      Sign applied to platform heave. Determined empirically for this survey by
-      correlating raw heave against the hand-verified EVL seabed line (0.14 m
-      residual for +1.0 vs 0.75 m for -1.0).
+      Sign applied to platform heave when computing transducer depth, +1.0 or
+      -1.0. +1.0 fits the hand-verified EVL seabed line best on HB2407.
+  # crop_max_range_m must be one constant for every file, or files get different
+  # range_sample lengths. Pick it from the deepest seabed in the .evl lines plus
+  # a margin, and check the crop step's reported "deepest kept".
   crop_max_range_m:
     type: float
     default: 250.0
     description: >
-      Fixed range ceiling, in metres, applied per file before the merge. Must
-      be a constant, not derived from the data, or files end up with different
-      range_sample lengths. Pick it from the deepest seabed anywhere in the
-      survey plus a margin -- the .evl line files give you that without reading
-      any Sv. Too shallow silently discards real echoes, so check the step's
-      reported "deepest kept" against the seabed line.
+      Range ceiling in metres; samples beyond it are dropped even if they hold
+      data. With other crop criteria set, the shallowest cut wins. Unset
+      derives the crop from the data.
+  # A 15-file HB2407 segment is about 42000 pings, so 2000 gives about 21 chunks.
   survey_chunk_ping_time:
     type: int
     default: 2000
     description: >
-      Ping-time chunk size of the shared survey Sv store, and therefore the
-      granularity a user's select_ping_time_range reads at. Set it near the
-      window users typically ask for: a 15-raw-file segment is roughly 42000
-      pings, so 2000 makes such a window about 21 chunks. Larger chunks mean
-      fewer, bigger reads and more read amplification on a narrow window.
+      Ping-time chunk size of the shared survey store, which sets the
+      granularity a window reads at. Size it near the window users usually ask
+      for.
 
 steps:
 
@@ -116,7 +111,7 @@ steps:
     params:
       depth_offset: ${compute_transducer_depth.transducer_depth}
 
-  # Fixed ceiling only, see the header.
+  # Fixed ceiling only, see crop_max_range_m.
   - id: crop_survey_range
     op: crop_range
     map_over: ${initial_setup.raw_file_paths}
@@ -136,9 +131,8 @@ steps:
     params:
       dim: "ping_time"
 
-  # Chunked along ping_time and checkpointed: this is the store users read. The
-  # write streams chunk by chunk, so building it does not need the survey in
-  # memory.
+  # This is the store users read. The write streams chunk by chunk, so
+  # building it does not need the survey in memory.
   - id: rechunk_survey_sv
     op: rechunk_dataset
     checkpoint: always

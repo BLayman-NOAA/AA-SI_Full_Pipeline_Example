@@ -1,11 +1,8 @@
 # Processing level 4 (single pass): machine learning.
-#
-# Reshapes MVBS for ML, adds auxiliary features, normalizes the ML dataset,
-# runs HDBSCAN clustering, and writes the clustering report.
 
 recipe:
   name: "processing_lvl_4_single_pass"
-  description: "ML reshape, normalization, single-pass clustering, and reporting."
+  description: "Reshape the MVBS for ML, add the cell CV feature, normalize, cluster once with HDBSCAN, and plot the clustering report."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -13,48 +10,49 @@ recipe:
 inputs:
   mvbs_with_lines:
     type: dataset
-    description: "MVBS dataset with line overlay variables added."
+    description: "Gridded MVBS with the line overlay variables added, flattened into one ML sample per cell."
+  # The feature list these recipes use does not need it.
   echodata:
     type: echodata
-    description: "EchoData object used for auxiliary ML features."
+    description: "Raw EchoData supplying the echosounder's own bottom pick for the 'seafloor_depth' and 'altitude' features. Used only when seafloor_depth is not wired."
   overlay_line_var:
     type: str
     default: "overlay_line"
-    description: "Line variable to overlay on the clustering report plot."
+    description: "Name of the line variable drawn over the clustering report plots."
   sv_clean_unmasked:
     type: dataset
     description: >
-      Pre-sparse-mask Sv used as the backdrop and ping-index reference for ML
-      and cluster echogram plots.
+      Noise-removed Sv before sparse-bin masking, used as the backdrop and ping
+      reference for the ML and cluster echograms.
   cell_stats_sv:
     type: dataset
-    description: "Per-cell statistics dataset produced from the clean unmasked Sv dataset."
+    description: "Per-cell statistics, such as the coefficient of variation, on the MVBS grid. Needed when the cell_cv feature is listed."
   min_depth:
     type: float
     default: 0
-    description: "Shallowest depth in meters shown by the ML and clustering echograms."
+    description: "Shallowest depth shown on the ML and clustering echograms, in metres."
   max_depth:
     type: float
     default: 1800
-    description: "Deepest depth in meters shown by the ML and clustering echograms."
+    description: "Deepest depth shown on the ML and clustering echograms, in metres. Unset uses the deepest depth in the data."
   time_min:
     type: str
     description: >
-      Start of the window shown by the ML and clustering echograms, as a UTC
-      timestamp. Omit to start at the first ping.
+      Start of the window of the ML and clustering echograms, as a UTC timestamp
+      such as "2024-10-15T12:30". Unset starts at the first ping.
   time_max:
     type: str
     description: >
-      End of the window shown by the ML and clustering echograms, as a UTC
-      timestamp. Omit to run through the last ping.
+      End of the window of the ML and clustering echograms, as a UTC timestamp
+      such as "2024-10-15T12:30". Unset runs to the last ping.
   x_axis_units:
     type: str
     default: "datetime"
-    description: "Units for the x-axis of the ML and clustering echograms."
+    description: "Echogram x axis: \"datetime\" (UTC clock time), \"seconds\" from the first ping shown, \"pings\", \"meters\" travelled, or \"bins\" (MVBS only)."
   y_axis_units:
     type: str
     default: "meters"
-    description: "Units for the y-axis of the ML and clustering echograms."
+    description: "Echogram y axis: \"meters\", \"range_sample\", or \"bins\" (MVBS only)."
 
 steps:
 
@@ -142,8 +140,7 @@ steps:
     params:
       dataset_name: "ml_dataset"
       ml_result_name: "hdbscan_results"
-      # [min_depth, max_depth]. time_min and time_max below window the plot
-      # horizontally, so the ping slots are left off.
+      # Depth limits only; time_min and time_max set the horizontal window.
       plot_window:
         - ${inputs.min_depth}
         - ${inputs.max_depth}

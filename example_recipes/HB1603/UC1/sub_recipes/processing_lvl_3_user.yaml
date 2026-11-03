@@ -4,41 +4,26 @@
 #               compute_per_cell_statistics (from the pre-sparse Sv)
 #   [fan-in]    merge the files a dive window touched -> the pooled dive grid
 #
-# The first three steps continue the per-file chain from level 2b, so include
-# this file directly after it and pass it the same per_file_source (see WHAT
-# THE STEPS MAP OVER in processing_lvl_1_per_file.yaml). The fan-in belongs
-# here and not at level 2 because range_sample is not a shared axis across
-# HB1603: files can only be merged once they are on the pinned depth grid.
-#
-# The per-cell CV comes off the same denoised Sv the grid is built from, which
-# in this recipe set is already seabed-masked, so no cell under the seabed
-# carries a statistic.
-#
-# The two per-file products are checkpointed because the fan-in collects them;
-# see the note on dive_file_mvbs. It costs a few megabytes per file and makes
-# an interrupted run resume from the files it finished.
+# The per-file steps continue level 2b's chain: include this directly after it
+# with the same per_file_source. The fan-in is here, not at level 2, because
+# HB1603 files only share an axis once they are on the pinned depth grid. The
+# per-cell CV comes from the seabed-masked, denoised Sv, so no cell under the
+# seabed carries one.
 #
 # THE FAN-IN AVERAGES
 #
-#   compute_mvbs and compute_per_cell_statistics anchor their time bins to a
-#   global origin, so a file boundary landing inside a bin makes both files
-#   emit that bin, each holding part of its pings. on_duplicate "mean" is what
-#   keeps the merged index unique.
+#   Time bins anchor to a global origin, so a file boundary inside a bin makes
+#   both files emit it; on_duplicate "mean" keeps the merged index unique.
 #
 # THE POOLED GRID IS THE ANALYSIS SET
 #
-#   Nothing slices it per dive again. dive_sv already kept, per file, exactly
-#   the pings inside a dive window and snapped to whole bins, so the merged
-#   grid holds each dive's cells once, in time order, and level 4 reads it
-#   directly. OE29/OE32 on 7 July share ten minutes and OE61/OE62/OE64 on
-#   25 July share eleven to fourteen minutes each; the union select keeps a
-#   shared ping once, so overlapping dives do not duplicate cells.
-#
-#   Per-dive work happens downstream, on slices of this grid: generate_sv_codes
-#   and the report read each dive's lines onto its own slice from the paths on
-#   its window, since two whales under one ping cannot share one line
-#   variable. A window that selects no pings is reported there, as a warning
-#   and a missing entry in dive_labels, rather than failing at this level.
+#   dive_sv already kept each dive's pings, snapped to whole bins, so level 4
+#   reads the merged grid directly. Overlapping dives (OE29/OE32 on 7 July,
+#   OE61/OE62/OE64 on 25 July) share pings, which the union select keeps once.
+#   Per-dive work happens downstream: generate_sv_codes and the report read
+#   each dive's lines onto its own slice, since two whales under one ping
+#   cannot share one line variable. A window that selects no pings is reported
+#   there as a warning.
 
 recipe:
   name: "hb1603_processing_lvl_3_user"
@@ -51,47 +36,44 @@ inputs:
   per_file_source:
     type: str
     description: >
-      The ${step.output} list the per-file steps map over, one instance per
-      entry. Must be overridden by the including recipe, with the same value
-      for every level that shares the chain. Normally ${query_ncei.raw_urls}:
-      the whole catalogue, or the dive files alone when that query carries
-      file_names. Substituted textually, so the fingerprinted map_over is the
-      value passed.
+      The step output list the per-file steps map over, one instance per
+      entry, normally ${query_ncei.raw_urls}. Required; give every level in
+      the chain the same value.
   range_bin:
     type: str
     default: "2m"
-    description: "Depth bin of the per-dive grid."
+    description: >
+      Depth bin height of the MVBS grid, as a length string such as "2m". The
+      sparse-bin mask and the cell statistics use the same bin.
   ping_time_bin:
     type: str
     default: "10s"
-    description: "Ping-time bin of the per-dive grid."
+    description: >
+      Ping-time bin width of the MVBS grid, as a duration string such as
+      "10s". The sparse-bin mask and the cell statistics use the same bin.
+  # "depth" needs the level 2 chain to route through ep_add_depth (dive_depth
+  # here). All binning steps must take the same value.
   range_var:
     type: str
     default: "depth"
-    description: "Variable the bins are built on. depth keeps the grid shared across files."
+    description: >
+      Variable the bins are built on: "depth" (below the surface, shared
+      across files and channels) or "echo_range" (from the transducer face).
   nan_threshold:
     type: float
     default: .99
-    description: "Fraction of a bin that may be NaN before the bin is dropped."
+    description: "Fraction of NaN samples (0 to 1) above which the sparse-bin mask drops a bin."
   mvbs_range_var_max:
     type: str
     default: "1810m"
     description: >
-      Depth the per-window MVBS grid is built out to, as the unit string
-      echopype parses. It is pinned rather than measured so every window shares
-      one depth axis and the fan-in has nothing to pad.
-
-      It must clear the deepest depth the survey tier can produce, which is not
-      crop_max_range_m: the crop is applied to echo_range, range from the
-      transducer, while depth adds the transducer's own depth below the surface
-      on top of it. HB1603's transducer sits about 8.9 m down, so a 1800 m
-      echo_range ceiling reaches roughly 1809 m of depth and 1810 m is the next
-      2 m bin edge above it. Raise both together, and keep the margin if you
-      move the crop: a ceiling below the data silently drops the deepest bins.
+      Deepest depth the MVBS grid covers, such as "1810m", pinned so every
+      file shares one depth axis. It must clear the range crop plus the
+      transducer depth, or the deepest bins are dropped.
   dive_chunk_ping_time:
     type: int
     default: 1000
-    description: "Ping-time chunk of the pooled dive store, on the MVBS grid."
+    description: "Ping-time chunk size of the pooled dive store, counted in MVBS time bins."
 
 steps:
 
@@ -106,18 +88,13 @@ steps:
       range_var: ${inputs.range_var}
       nan_threshold: ${inputs.nan_threshold}
 
-  # Pinned depth axis for the same reason the survey tier pins it: every file
-  # gets the same range_sample length, so the fan-in has nothing to pad.
+  # Pinned depth axis, so every file gets the same length and the fan-in has
+  # nothing to pad.
   #
-  # checkpoint: always is not optional here, and neither is it on
-  # dive_cell_stats below. They are the two chain members the fan-in collects,
-  # and an uncheckpointed member reaches the fan-in as a lazy graph rooted in
-  # the worker's scratch stores, which read_raw deletes as each instance
-  # finishes. When the per-file Sv is computed in this run rather than loaded
-  # from the survey cache, that graph then reads deleted chunks, and zarr
-  # returns its fill value for a missing chunk: every cell NaN, no error, and
-  # a clustering step downstream that fails on an empty channel list.
-  # Checkpointed, the fan-in reloads durable per-file grids instead.
+  # checkpoint: always is required here and on dive_cell_stats: the fan-in
+  # collects them, and uncheckpointed they would reach it as lazy graphs over
+  # scratch stores read_raw has deleted, which zarr reads back as all NaN with
+  # no error.
   - id: dive_file_mvbs
     op: compute_mvbs
     map_over: ${inputs.per_file_source}

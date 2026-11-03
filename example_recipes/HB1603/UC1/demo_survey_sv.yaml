@@ -1,26 +1,24 @@
 # HB1603 demo survey Sv: survey_sv.yaml narrowed to three raw files.
 #
-# A small, fully local recipe for testing and demonstrating the recipe manager
-# client. It is survey_sv.yaml (levels 0 to 2a) with the catalogue query cut
-# to 2016-08-14 14:40 to 15:25 UTC, which NCEI resolves to three raw files:
+# A small recipe for testing and demonstrating the recipe manager client. The
+# catalogue query is cut to 2016-08-14 14:40 to 15:25 UTC, which NCEI resolves
+# to three raw files:
 #
 #   D20160814-T143539   dive SWD_20160814-OE09 starts here
 #   D20160814-T145828   dive SWD_20160814-OE09 ends here
 #   D20160814-T152116   no dive pings, dropped by the dive analysis
 #
-# The files are streamed from NCEI over public HTTPS, as in survey_sv.yaml.
-# Calibration comes from the UC1 .cal files. Caches, scratch and outputs go
-# under ./demo, set in demo_survey_sv.config.yaml.
-#
-# Run from this folder, the survey first:
+# Files stream from NCEI over HTTPS, as in survey_sv.yaml. Caches, scratch and
+# outputs go under ./demo, set in demo_survey_sv.config.yaml. Run from this
+# folder, the survey first:
 #
 #   aa-recipe run demo_survey_sv.yaml --cache-write-tier survey
 #   aa-recipe run demo_dive_analysis.yaml
 #
-# demo_dive_analysis.yaml includes these levels with the same values, so its
-# levels 0 to 2a hash identically and load from the demo survey cache. Keep
-# the two files in step. The demo caches are separate from the full cruise
-# cache: a narrowed query is a different parent of every per file step.
+# demo_dive_analysis.yaml includes these levels with the same values, so they
+# load from the demo survey cache; keep the two files in step. The narrowed
+# query is a parent of every per-file step, so the demo caches are separate
+# from the full cruise cache.
 
 recipe:
   name: "hb1603_demo_survey_sv"
@@ -33,14 +31,15 @@ inputs:
   cal_input_folder:
     type: path
     default: "../calibration_files/HB201607_cal"
-    description: "Manufacturer .cal files."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_output_dir:
     type: path
     default: "./demo/outputs/calibration"
+    description: "Root folder the calibration artifacts are written under."
   crop_max_range_m:
     type: float
     default: 1800.0
-    description: "Range ceiling applied per file. See processing_lvl_2_survey.yaml."
+    description: "Range ceiling in metres; samples beyond it are dropped even if they hold data. Changing it recomputes the whole survey Sv."
 
 steps:
 

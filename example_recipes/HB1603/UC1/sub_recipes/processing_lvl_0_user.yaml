@@ -1,34 +1,22 @@
 # Processing level 0 (user): the survey's catalogue and calibration, loaded.
 #
-# The same five steps as processing_lvl_0_survey.yaml, wired and parameterised
-# identically, with the regenerate attributes removed. That is the whole
-# difference, and it is what an analyst wants:
+# processing_lvl_0_survey.yaml's five steps, wired identically, without the
+# regenerate attributes. regenerate is not fingerprinted, so every hash equals
+# the survey variant's: build_cal_mapping loads from the survey cache, the
+# three steps between it and query_ncei are pruned, and no calibration file is
+# read or written.
 #
-#   * regenerate and checkpoint are not part of a step's fingerprint, so every
-#     hash here equals the survey variant's and the run reads the survey's
-#     cache entries.
-#   * With nothing forcing a re-run, build_cal_mapping is loaded from its
-#     checkpoint in under a second and query_ncei is loaded as the map
-#     source. The three steps between them are pruned, and no calibration
-#     file is read or written. The survey variant spends a few
-#     seconds regenerating them on every run, and on a machine without the
-#     outputs folder it also probes all 3322 scan entries in the bucket.
-#
-# It cannot BUILD the calibration. If the survey has not been run, or a step
-# here no longer matches the survey variant, build_cal_mapping misses the
-# cache and runs against single-channel files that are not on this machine,
-# and fails with "Calibration files directory not found". That failure is the
-# signal to run survey_sv.yaml, not to edit this file.
-#
-# Read processing_lvl_0_survey.yaml for what these steps do and for the two
-# scientific choices they carry: the 1 MiB scan cap and the transmit power
-# tolerance widened for HB1603's leg 1.
+# It cannot build the calibration. If the survey has not been run, or a step
+# here no longer matches the survey variant, build_cal_mapping fails with
+# "Calibration files directory not found": run survey_sv.yaml rather than
+# editing this file. processing_lvl_0_survey.yaml explains the steps, the scan
+# cap and the widened power tolerance.
 #
 # KEEP THE TWO VARIANTS IN STEP
 #
 #   A change to a step's wiring or params belongs in both files or neither.
-#   The check is mechanical: every step hash in dive_analysis.yaml must equal
-#   the same step's hash in survey_sv.yaml.
+#   Every step hash in dive_analysis.yaml must equal the same step's hash in
+#   survey_sv.yaml.
 
 recipe:
   name: "hb1603_processing_lvl_0_user"
@@ -41,51 +29,54 @@ inputs:
   cruise_name:
     type: str
     default: "HB1603"
-    description: "CRUISE_NAME filter for the NCEI catalogue query."
+    description: >
+      Cruise name searched for in the NCEI catalogue, such as "HB1603".
   file_time_start:
     type: str
     default: "2016-06-01T00:00:00"
     description: >
-      Lower bound of the catalogue query. Deliberately wider than the cruise,
-      which runs 2016-06-27 to 2016-08-25, so the window states an intent
-      rather than a measurement and does not need editing if the catalogue
-      gains a file at either end. It must stay fixed once a scan has been
-      cached: it is a query param, so moving it re-runs every instance.
+      Start of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T20:58". Every file overlapping the window is fetched.
   file_time_end:
     type: str
     default: "2016-09-01T00:00:00"
-    description: "Upper bound of the catalogue query. See file_time_start."
+    description: >
+      End of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T21:45". Every file overlapping the window is fetched.
   cal_input_folder:
     type: path
     description: >
-      Folder of manufacturer calibration files (.cal for EK60). Local or a
-      gs:// URL. This is the one input the scan cannot get from NCEI.
+      Folder of manufacturer calibration files (.cal for EK60, .xml for EK80),
+      a local path or a gs:// URL.
   calibration_output_dir:
     type: path
     default: "./outputs/calibration"
-    description: >
-      Root the calibration artifacts are written under. Passed directly rather
-      than taken from initial_setup, which needs a local raw folder.
+    description: "Root folder the calibration artifacts are written under."
   cruise_id:
     type: str
     default: "HB1603"
-    description: "Recorded in every generated single-channel file."
+    description: >
+      Cruise identifier, such as "HB1603", recorded in every generated
+      single-channel calibration file so it stays traceable to the survey.
   record_author:
     type: str
     default: "<Your Name>"
-    description: "Recorded as the author of every generated single-channel file."
+    description: "Name recorded as the author of every generated single-channel calibration file."
   max_scan_bytes:
     type: int
     default: 1048576
-    description: "Leading bytes read per raw object. See the note above before lowering."
+    description: >
+      Most leading bytes read from each raw file to find its channel
+      configuration. The default, 1 MiB, settles every HB1603 file in one
+      small read.
   match_tolerances:
     type: dict
     default:
       transmit_power: 1001.0
     description: >
-      Per-field tolerances for matching a raw channel to a calibration file,
-      merged over the matcher's exact defaults. See the note below on why
-      transmit_power is widened for HB1603.
+      Per-field tolerances for matching a raw channel to a calibration file
+      (Hz, W, or s), merged over exact defaults. The default widens
+      transmit_power to 1001 W.
 
 steps:
 
@@ -131,11 +122,9 @@ steps:
       record_author: ${inputs.record_author}
       short_filenames: true
 
-  # No regenerate here, unlike the survey variant, so this loads the mapping
-  # the survey run checkpointed: two dicts holding the calibration values
-  # themselves. Nothing below this step reads a calibration file from disk, so
-  # calibration_output_dir need not exist on the analyst's machine. With this
-  # step loadable the planner prunes the scan and the two steps after it.
+  # No regenerate, unlike the survey variant, so this loads the checkpointed
+  # mapping and nothing below reads a calibration file: calibration_output_dir
+  # need not exist on this machine.
   - id: build_cal_mapping
     op: build_calibration_mapping
     checkpoint: always

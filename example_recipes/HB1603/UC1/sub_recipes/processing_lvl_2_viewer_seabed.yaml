@@ -4,50 +4,31 @@
 #   split-beam angles -> crop -> seabed line -> surface + frequency + seabed
 #   masks -> apply -> remove noise
 #
-# The viewer's half of level 2, per file, for every file in the catalogue,
-# with the seabed masked out of the picture. It replaces
-# processing_lvl_2_viewer.yaml, which leaves the seabed in, and hands the same
-# step ids on to processing_lvl_3_viewer.yaml (viewer_apply_mask,
-# viewer_remove_noise), so level 3 is unchanged.
+# Replaces processing_lvl_2_viewer.yaml, which leaves the seabed in, and hands
+# processing_lvl_3_viewer.yaml the same step ids (viewer_apply_mask,
+# viewer_remove_noise).
 #
 # WHERE THE SEABED LINE COMES FROM
 #
-#   phase_detect_seafloor, the phase-aware line picker in aa_si_utils.seabed.
-#   It needs no .bot file, no Echoview line and no depth window: it first
-#   estimates the seabed from a few dozen slabs of pings across the whole
-#   recorded range, then searches around that estimate, per file, so the same
-#   step serves the shelf and the abyssal plain. Where a file's seabed lies
-#   below this level's crop nothing is found, and missing: max_range keeps those
-#   pings whole instead of blanking them, which is the difference between a
-#   survey picture and the dive analysis (whose read_seafloor_line masks a
-#   ping with no line entirely, on purpose).
-#
-#   The line is the seabed echo's leading edge; seafloor_buffer_m above it is
-#   masked too. It is not the analyst line the dive analysis uses, so the two
-#   products' bottoms will differ by metres where they overlap; the analysis
-#   store is meant to be layered over this one anyway.
+#   phase_detect_seafloor needs no .bot file, Echoview line or depth window: it
+#   estimates the seabed from slabs of pings across the recorded range, then
+#   searches around that per file, so one step serves the shelf and the abyssal
+#   plain. Where the seabed lies below this level's crop nothing is found, and
+#   missing: max_range keeps those pings whole. The line is not the analyst
+#   line the dive analysis uses, so the two bottoms differ by metres.
 #
 # WHY ANGLES ARE ADDED HERE AND THIS LEVEL CROPS FOR ITSELF
 #
-#   The picker reads split-beam angles off the Sv dataset. echopype can only
-#   attach them to an uncropped dataset (it checks range_sample against the
-#   beam group), so this level takes the survey's ep_add_depth output, adds
-#   angles, and crops for itself, to its own crop_max_range_m (3000 m from the
-#   pyramid recipe, against the survey's 1800 m). ep_add_depth is a cheap
-#   derivation of the compute_sv and compute_transducer_depth checkpoints, so
-#   the run still builds on the survey cache from compute_sv down; only
-#   crop_survey_range itself is not reused. The survey includes above this
-#   level are untouched and keep their hashes.
+#   echopype attaches split-beam angles only to an uncropped dataset, so this
+#   level starts from the survey's ep_add_depth output and crops to its own
+#   crop_max_range_m (3000 m from the pyramid recipe). The survey cache is
+#   still used from compute_sv down; only crop_survey_range is not reused.
 #
-# THE REST IS processing_lvl_2_viewer.yaml
-#
-#   No window (every file), 18 and 38 kHz only unless frequencies_to_mask
-#   says otherwise, and noise removal after the masks, per file. The seabed is
-#   masked at full-resolution Sv, before noise removal and before MVBS, so the
-#   noise estimate never sees the bottom and no bin averages water with seabed.
-#
-# Include directly after processing_lvl_2_survey.yaml: these steps continue the
-# per-file chain mapped over query_ncei.raw_urls.
+# The rest follows processing_lvl_2_viewer.yaml, except that only 18 and 38 kHz
+# are kept by default and the seabed is masked before noise removal, so the
+# noise estimate never sees the bottom. Include directly after
+# processing_lvl_2_survey.yaml: these steps continue the per-file chain mapped
+# over query_ncei.raw_urls.
 
 recipe:
   name: "hb1603_processing_lvl_2_viewer_seabed"
@@ -61,81 +42,75 @@ inputs:
     type: float
     default: 1800.0
     description: >
-      Range ceiling applied after the angles are added. Independent of the
-      survey level's crop, because this level starts from the uncropped
-      ep_add_depth output; the pyramid recipe sets it to 3000 m so seabeds
-      between 1800 m and the end of the recording are found and masked. Level
-      3's grid_max_depth has to reach it.
+      Range ceiling in metres, applied after the split-beam angles are added;
+      samples beyond it are dropped even if they hold data. Level 3's
+      grid_max_depth must reach it.
   seabed_channel:
     type: str
     default: "38"
     description: >
-      Channel the seabed is picked on, as a label or a frequency in kHz. 38
-      kHz is the only channel that reaches the bottom everywhere on HB1603.
+      Channel the seabed is picked on, as a channel label or a frequency in kHz
+      such as "38". 38 kHz reaches the bottom everywhere on HB1603.
   seabed_max_slope_deg:
     type: float
     default: 30.0
     description: >
-      Maximum plausible seabed slope. With the distance travelled between
-      pings it sets how much the line may move per ping at ordinary cost;
-      larger jumps cost more but are allowed. 45 for canyon terrain.
+      Maximum plausible seabed slope, in degrees; with the distance between
+      pings it sets how far the line may move per ping at ordinary cost. Use 45
+      for canyon terrain.
   seabed_max_gap_s:
     type: float
     default: 600.0
     description: >
-      Interior runs of pings with no seabed found up to this long are
-      interpolated across. Longer runs, and the ends of a file, fall to the
-      missing policy below.
+      Interior gaps in the detected seabed line up to this many seconds are
+      interpolated. Longer gaps, and the ends of a file, follow the
+      missing-seabed setting.
+  # On canyon walls the 18 kHz beam sees the up-slope bottom before the 38 kHz
+  # line does; raise this, or use the integration line, if bottom echo remains.
   seafloor_buffer_m:
     type: float
     default: 10.0
     description: >
-      Metres above the seabed line that are also masked out. Applied to
-      full-resolution Sv, so it is exact rather than quantised to range_bin.
-      On the canyon walls the 18 kHz beam sees the up-slope bottom before the
-      38 kHz line does; raise this, or set seabed_line to integration, if
-      bottom echo is left in the picture there.
+      Height above the seabed line, in metres, that is also masked, to drop the
+      bottom echo and detection error.
   seabed_line:
     type: str
     default: "integration"
     description: >
-      "leading_edge" masks from the top of the seabed echo; "integration"
-      masks from the slope-corrected Ona-Mitson backstep above it, which
-      clears more on steep walls.
+      "leading_edge" masks from the top of the seabed echo; "integration" masks
+      from the slope-corrected line above it, which clears more on steep walls.
   surface_depth_m:
     type: float
     default: 10.0
-    description: >
-      Range from the transducer, in metres, above which samples are masked. It
-      removes the transmit pulse and ringdown. The transducer sits about 8.9 m
-      down, so 10 m of range is roughly the top 19 m of water.
+    description: "Range from the transducer, in metres, above which samples are masked, to remove the transmit pulse and ringdown."
   frequencies_to_mask:
     type: list
     default: [70, 120, 200]
     description: >
-      Channel frequencies in kHz to blank. The default drops the three high
-      frequencies, which below a few hundred metres carry only range-amplified
-      noise that survives noise removal, and matches the dive analysis. Empty
-      keeps all five.
+      Nominal channel frequencies in kHz to blank, such as [70, 120, 200];
+      every sample on those channels is masked. An empty list keeps every
+      channel.
   noise_range_sample_num:
     type: int
     default: 10
-    description: "Range samples per noise-estimation bin."
+    description: "Range samples per bin for the background noise estimate."
   noise_ping_num:
     type: int
     default: 5
-    description: "Pings per noise-estimation bin."
+    description: "Pings per bin for the background noise estimate."
   noise_snr_threshold:
     type: str
     default: "3.0dB"
     description: >
-      Samples whose corrected Sv sits less than this above the noise estimate
-      are masked. This is what limits each channel in depth; raise it for a
+      Samples whose noise-corrected Sv is less than this above the noise
+      estimate are masked, as a dB string such as "3.0dB". Raise it for a
       cleaner, shallower picture.
   noise_background_max:
     type: str
     default: null
-    description: "Ceiling on the noise estimate, e.g. \"-160.0dB\". Null leaves it unbounded."
+    description: >
+      Ceiling on the background noise estimate, as a dB string such as
+      "-125dB". Null leaves it unbounded.
 
 steps:
 

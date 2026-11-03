@@ -1,35 +1,18 @@
 # Processing level 2 (GCS, parallel): per-file Sv and masking, survey fan-in.
+# Continues the mapped chain from processing_lvl_1_gcs_parallel.yaml, which
+# must be included immediately before this level.
 #
-# GCS-tuned per-file variant of processing_lvl_2.yaml. Continues the mapped
-# chain started in processing_lvl_1_gcs_parallel.yaml, which must be included
-# immediately before this level.
+# The fan-in follows apply_mask: the depth, split-beam and seafloor steps need
+# each file's EchoData, and every step up to there is ping-local. remove_noise
+# has a cross-ping window, so it runs survey-wide.
 #
-#   [per file] compute_sv -> ep_add_depth -> ep_add_splitbeam_angle
-#              -> log_seafloor_stats -> detect_seafloor
-#              -> seafloor/surface/frequency masks -> combine -> apply_mask
-#   [fan-in]   merge_sv, concat along ping_time
-#   [survey]   rechunk_before_noise -> remove_noise
-#
-# The fan-in sits at apply_mask because the depth, split-beam and seafloor steps
-# all need the EchoData that produced the Sv, and because every step above it is
-# ping-local, so per-file results match whole-survey ones. remove_noise is the
-# first step with a cross-ping window, so it stays survey-wide.
-#
-# Checkpoints below are cost decisions, not defaults, since uploads dominate a
-# bucket run:
-#
-#   * ep_add_splitbeam_angle: no checkpoint. It was a large upload for almost no
-#     compute, and remove_noise re-uploads its angle arrays anyway.
-#   * merge_sv: no checkpoint. A full-survey write here is expensive on a slow
-#     uplink and remove_noise downstream is already checkpointed. Under a local
-#     cache, checkpoint it: the write is cheap and it shortens re-runs.
-#   * compute_sv: kept, now per file, so adding one raw file later recomputes
-#     only that file.
-#   * remove_noise: kept. This is the durable science product.
+# Checkpoints are upload-cost choices. ep_add_splitbeam_angle and merge_sv are
+# not checkpointed (large uploads; checkpoint merge_sv under a local cache).
+# compute_sv is, per file, so a new raw file recomputes only that file.
 
 recipe:
   name: "processing_lvl_2_parallel"
-  description: "Per-file Sv and masking, fan-in to survey Sv, then noise removal."
+  description: "Compute and mask Sv one raw file at a time, merge the files into one survey Sv, then remove background noise."
   version: "1.0"
   author: "<Your Name>"
   schema_version: "1"
@@ -37,55 +20,56 @@ recipe:
 inputs:
   echodata:
     type: echodata
-    description: "Per-file EchoData object from the parallel raw ingest stage."
+    description: "One file's raw EchoData from level 1, calibrated to Sv here and used for transducer depth."
   cal_params:
     type: dict
-    description: "Calibration parameters selected for this file."
+    description: "Calibration values for each channel for this file, taken from the standardized calibration mapping and applied when computing Sv."
   env_params:
     type: dict
-    description: "Environmental parameters selected for this file."
+    description: "Environmental values for each channel for this file, such as sound speed and absorption, taken from the standardized calibration mapping and applied when computing Sv."
   depth_offset:
     type: float
     default: 0.0
     description: >
-      Transducer depth in meters below the waterline, added to range to give
-      depth. Fixed for the whole survey rather than derived per ping.
+      Transducer depth below the waterline, in metres, added to range to give
+      depth. One fixed value for the whole survey.
   seafloor_buffer_m:
     type: float
     default: 0.0
     description: >
-      Metres above the detected seafloor at which the seafloor mask starts
-      excluding samples, so the bottom echo and its ringing are dropped.
+      Height above the seabed line, in metres, that is also masked, to drop the
+      bottom echo and detection error.
   surface_mask_depth:
     type: float
     default: 10.0
-    description: "Depth in meters above which the surface mask excludes samples."
+    description: "Range from the transducer, in metres, above which samples are masked, to remove the transmit pulse and ringdown."
+  # The default drops the high frequencies, which at depth carry only
+  # range-amplified noise. Blanked channels are all NaN, the source of noise
+  # removal's harmless "All-NaN slice" warning.
   frequencies_to_mask:
     type: list
     default: [70, 120, 200]
     description: >
-      Frequencies (kHz) removed by the frequency mask. These channels become
-      entirely NaN, which is where remove_noise's benign "All-NaN slice
-      encountered" warning comes from.
+      Nominal channel frequencies in kHz to blank, such as [70, 120, 200]; every
+      sample on those channels is masked. An empty list keeps every channel.
   noise_range_sample_num:
     type: int
     default: 10
-    description: "Number of range samples per bin used for background noise estimation."
+    description: "Range samples per bin for the background noise estimate."
   noise_ping_num:
     type: int
     default: 5
-    description: "Number of pings per bin used for background noise estimation."
+    description: "Pings per bin for the background noise estimate."
+  # Must be below the window's ping count or it is a single chunk. On a
+  # cross-region bucket prefer larger values: more chunks mean more objects to
+  # write on the checkpoint. Benchmarked ~40% faster on HB1603 (2026-07-31).
   noise_chunk_ping_time:
     type: int
     default: 100
     description: >
-      Ping-time chunk size applied to the merged survey Sv before remove_noise,
-      so its coarsen()-based estimate runs dask-parallel instead of as one
-      in-memory block. Must be smaller than the window's ping count or it
-      clamps to a single chunk and does nothing, and should stay a multiple of
-      noise_ping_num so coarsen() dispatches across chunks cleanly. On a
-      cross-region bucket, more chunks means more objects and more round trips
-      on the checkpoint write, so prefer larger values there.
+      Ping-time chunk size set before noise removal, so the noise estimate runs
+      in dask chunks rather than as one in-memory block. Keep it a multiple of
+      noise_ping_num.
 
 steps:
 
@@ -109,10 +93,9 @@ steps:
     params:
       depth_offset: ${inputs.depth_offset}
 
-  # No checkpoint, see the header. If the archived product does not need the
-  # split-beam angle variables at all, dropping this step and pointing
+  # No checkpoint, see the header. Dropping this step and pointing
   # create_seafloor_mask at ${ep_add_depth.ds_Sv} would shrink remove_noise's
-  # checkpoint further, but that changes what the pipeline produces.
+  # checkpoint further, but removes the split-beam angles from the product.
   - id: ep_add_splitbeam_angle
     op: ep_add_splitbeam_angle
     map_over: ${initial_setup.raw_file_paths}
@@ -186,8 +169,7 @@ steps:
       ds_Sv: ${compute_sv.ds_Sv}
       mask: ${combine_masks.mask}
 
-  # Fan-in: reassemble the survey from the per-file masked Sv. Not checkpointed
-  # on a remote cache, see the header.
+  # Fan-in to one survey Sv. Not checkpointed, see the header.
 
   - id: merge_sv
     op: merge_datasets

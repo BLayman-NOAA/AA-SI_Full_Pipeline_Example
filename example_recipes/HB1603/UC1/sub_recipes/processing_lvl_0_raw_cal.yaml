@@ -3,29 +3,19 @@
 #   query_ncei   the survey's catalogue query, keeping only the files the
 #                dive plan names; its raw_urls are what levels 1 to 3 map over
 #
-# The level 0 of dive_analysis_raw_cal.yaml. No manufacturer calibration files
-# are read, standardized or mapped: compute_sv takes gains and environment
-# from each raw file, as echopype does when handed nothing.
+# Level 0 of dive_analysis_raw_cal.yaml. No calibration files are read:
+# compute_sv takes gains and environment from each raw file.
 #
 # WHY ONLY THE DIVE FILES
 #
-#   A recipe that recalibrates cannot reuse the survey's per-file Sv, so
-#   mapping the chain over the whole catalogue would compute Sv for 3322
-#   files to use 24. file_names keeps the files the dive configs name. The
-#   match is on the D{date}-T{time} stamp, so a config's bare
-#   D20160725-T205832.raw matches the archive's HB1603_L1- form as well as its
-#   own, and a dive file the catalogue does not have fails the step rather
-#   than shrinking the study.
+#   A recalibrating recipe cannot reuse the survey's per-file Sv, so mapping
+#   the whole catalogue would compute Sv for 3322 files to use 24. file_names
+#   matches on the D{date}-T{time} stamp, so a config's bare file name matches
+#   the archive's HB1603_L1- form, and a dive file the catalogue lacks fails
+#   the step. The time window stays the survey's; the names do the narrowing.
 #
-#   The time window is left at the survey's, the whole cruise. It is not what
-#   narrows the result, the names are, and one window cannot cover six dive
-#   dates spread over 38 days without covering everything between them.
-#
-# NOT THE SURVEY'S QUERY ENTRY
-#
-#   file_names is a param, so this step's hash differs from the survey's
-#   query and it runs rather than loading: one catalogue query, seconds.
-#   Everything below it is this path's own cache in any case.
+#   file_names makes this step's hash differ from the survey's query, so it
+#   runs (seconds) rather than loading.
 
 recipe:
   name: "hb1603_processing_lvl_0_raw_cal"
@@ -38,26 +28,24 @@ inputs:
   cruise_name:
     type: str
     default: "HB1603"
-    description: "CRUISE_NAME filter for the NCEI catalogue query."
+    description: >
+      Cruise name searched for in the NCEI catalogue, such as "HB1603".
   file_time_start:
     type: str
     default: "2016-06-01T00:00:00"
     description: >
-      Lower bound of the catalogue query. Deliberately wider than the cruise,
-      which runs 2016-06-27 to 2016-08-25, so the window states an intent
-      rather than a measurement and does not need editing if the catalogue
-      gains a file at either end. It must stay fixed once a scan has been
-      cached: it is a query param, so moving it re-runs every instance.
+      Start of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T20:58". Every file overlapping the window is fetched.
   file_time_end:
     type: str
     default: "2016-09-01T00:00:00"
-    description: "Upper bound of the catalogue query. See file_time_start."
+    description: >
+      End of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T21:45". Every file overlapping the window is fetched.
+  # Wire it to plan_dives.raw_files.
   dive_raw_files:
     type: list
-    description: >
-      Raw file names the dives touch. Wire it to plan_dives.raw_files. The
-      query keeps only these, so its raw_urls output is the list levels 1 to 3
-      map over.
+    description: "Raw file names the dives touch, from the dive plan. The catalogue query keeps only these files."
 
 steps:
 

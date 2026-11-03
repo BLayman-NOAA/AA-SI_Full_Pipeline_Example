@@ -2,49 +2,29 @@
 #
 #   surface + frequency masks -> apply -> remove noise
 #
-# The viewer's half of level 2, per file, for every file in the catalogue. It
-# starts from the shared per-file Sv at crop_survey_range, exactly where
-# processing_lvl_2_user.yaml starts, and differs from it in three ways that all
-# follow from the product being a picture of the survey, not an analysis of
-# the dives:
+# The viewer's half of level 2, per file, for every catalogue file, starting
+# from crop_survey_range like processing_lvl_2_user.yaml. It differs because the
+# product is a picture of the survey, not a dive analysis:
 #
-#   * No window. Every file is processed.
-#   * No seabed mask. The seabed lines cover only the six dive dates, and a
-#     ping with no line depth would be masked out entirely, so a survey-wide
-#     seabed mask would silently delete most of the cruise. The seabed stays
-#     in the picture, which is where a viewer wants it anyway.
-#   * Every frequency is kept by default. See below.
+#   * No window: every file is processed.
+#   * No seabed mask: the seabed lines cover only the six dive dates, and a
+#     ping with no line depth is masked whole, so a survey-wide seabed mask
+#     would silently delete most of the cruise.
+#   * Every frequency is kept by default.
 #
-# WHY THE HIGH FREQUENCIES ARE KEPT HERE AND DROPPED IN THE ANALYSIS
+# WHY THE HIGH FREQUENCIES ARE KEPT HERE
 #
-#   The dive analysis masks 70, 120 and 200 kHz because the clustering needs
-#   one feature vector at every depth a whale reaches, and those channels carry
-#   nothing below a few hundred metres. That is a requirement of the
-#   clustering, not a verdict on the data: in the upper water column they are
-#   the channels that separate zooplankton from fish, and a viewer is where
-#   that is looked at.
+#   The dive analysis drops 70, 120 and 200 kHz because the clustering needs
+#   one feature vector at every depth a whale reaches. In the upper water
+#   column those channels separate zooplankton from fish, which a viewer should
+#   show. Noise removal limits each channel's depth on its own: the noise floor
+#   rises with range, so each channel blanks where it stops carrying signal,
+#   200 kHz first.
 #
-#   They also do not need a depth limit drawn by hand. remove_background_noise
-#   estimates each channel's noise floor and masks every sample less than
-#   noise_snr_threshold above it. The floor rises with range as the
-#   time-varied gain amplifies it, so each channel blanks itself at the range
-#   where it stops carrying signal, 200 kHz first and 18 kHz last, and that
-#   range moves with conditions the way a fixed cutoff cannot.
-#
-#   frequencies_to_mask is still here, empty, for a store that should match the
-#   analysis channel for channel.
-#
-# WHAT "BELOW THE WATER COLUMN" MEANS HERE
-#
-#   Without a seabed line the only survey-wide limit is a fixed one, and the
-#   shared Sv already carries it: crop_survey_range cut every file at 1800 m of
-#   range. Over the abyssal plain that is all water. Over the shelf, where the
-#   seabed is as shallow as 13 m, most of each ping is below the bottom and is
-#   drawn as such: the bottom echo, then its multiples and reverberation. To
-#   cut the picture off shallower, lower grid_max_depth in level 3.
-#
-# Include directly after processing_lvl_2_survey.yaml: these steps continue the
-# per-file chain mapped over query_ncei.raw_urls.
+# Below the seabed the picture shows the bottom echo and its multiples, down
+# to the survey's 1800 m range crop; lower grid_max_depth in level 3 to cut it
+# off shallower. Include directly after processing_lvl_2_survey.yaml: these
+# steps continue the per-file chain mapped over query_ncei.raw_urls.
 
 recipe:
   name: "hb1603_processing_lvl_2_viewer"
@@ -54,38 +34,40 @@ recipe:
   schema_version: "1"
 
 inputs:
+  # HB1603: the transducer sits about 8.9 m down, so 10 m of range is roughly
+  # the top 19 m of water.
   surface_depth_m:
     type: float
     default: 10.0
-    description: >
-      Range from the transducer, in metres, above which samples are masked. It
-      removes the transmit pulse and ringdown. The transducer sits about 8.9 m
-      down, so 10 m of range is roughly the top 19 m of water.
+    description: "Range from the transducer, in metres, above which samples are masked, to remove the transmit pulse and ringdown."
   frequencies_to_mask:
     type: list
     default: []
     description: >
-      Channel frequencies in kHz to blank. Empty keeps all five. Set
-      [70, 120, 200] for a store that matches the dive analysis.
+      Nominal channel frequencies in kHz to blank, such as [70, 120, 200];
+      every sample on those channels is masked. An empty list keeps every
+      channel.
   noise_range_sample_num:
     type: int
     default: 10
-    description: "Range samples per noise-estimation bin."
+    description: "Range samples per bin for the background noise estimate."
   noise_ping_num:
     type: int
     default: 5
-    description: "Pings per noise-estimation bin."
+    description: "Pings per bin for the background noise estimate."
   noise_snr_threshold:
     type: str
     default: "3.0dB"
     description: >
-      Samples whose corrected Sv sits less than this above the noise estimate
-      are masked. This is what limits each channel in depth; raise it for a
+      Samples whose noise-corrected Sv is less than this above the noise
+      estimate are masked, as a dB string such as "3.0dB". Raise it for a
       cleaner, shallower picture.
   noise_background_max:
     type: str
     default: null
-    description: "Ceiling on the noise estimate, e.g. \"-160.0dB\". Null leaves it unbounded."
+    description: >
+      Ceiling on the background noise estimate, as a dB string such as
+      "-125dB". Null leaves it unbounded.
 
 steps:
 

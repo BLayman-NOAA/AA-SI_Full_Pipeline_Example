@@ -1,27 +1,23 @@
 # HB1603 survey Sv: the shared artifact, levels 0 to 2a.
 #
-# The survey-level recipe of the survey/user split. It is the only recipe that
-# builds the calibration, and the only one that computes Sv from raw: one
-# checkpointed, range-cropped Sv per catalogue file, 3322 of them. Run it once
-# per cruise and curate the result into the shared tier:
+# The survey-level recipe of the survey/user split, and the only one that
+# builds the calibration and computes Sv from raw: one checkpointed,
+# range-cropped Sv per catalogue file, 3322 of them. Run it once per cruise
+# into the shared tier:
 #
 #   aa-recipe run survey_sv.yaml --executor dask --dask-workers 16 --cache-write-tier survey
 #
 #   level 0 (survey)  catalogue, channel scan, calibration files and mapping
-#   level 1           per file: raw ingest, calibration parameters
-#   level 2a          per file: Sv, surface-referenced depth, range crop
+#   level 1           per file: raw ingest
+#   level 2a          per file: calibration parameters, Sv, surface-referenced
+#                     depth, range crop
 #
-# It stops there on purpose. HB1603's range_sample axis differs between files,
-# so the survey cannot be merged at full resolution, and everything past the
-# crop is an analyst's choice. dive_analysis.yaml picks up from
-# crop_survey_range.
+# It stops at the crop: range_sample differs between HB1603 files, so the
+# survey cannot be merged at full resolution, and everything past the crop is
+# an analyst's choice. dive_analysis.yaml picks up from crop_survey_range.
 #
-# IF survey_preprocess.yaml HAS ALREADY BEEN RUN, THIS IS ALREADY DONE
-#
-#   Its first two includes are these same twelve steps with the same hashes, so
-#   they wrote the same cache entries. survey_preprocess.yaml goes on to build
-#   the gridded survey store that full_analysis.yaml reads; this recipe set
-#   does not use that store.
+# survey_preprocess.yaml's first two includes are these same twelve steps with
+# the same hashes, so running either fills the same cache entries.
 
 recipe:
   name: "hb1603_survey_sv"
@@ -34,16 +30,15 @@ inputs:
   cal_input_folder:
     type: path
     default: "../calibration_files/HB201607_cal"
-    description: "Manufacturer .cal files."
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
   calibration_output_dir:
     type: path
     default: "./outputs/calibration"
+    description: "Root folder the calibration artifacts are written under."
   crop_max_range_m:
     type: float
     default: 1800.0
-    description: >
-      Range ceiling applied per file. Every consumer shares it: change it and
-      the whole survey Sv is recomputed. See processing_lvl_2_survey.yaml.
+    description: "Range ceiling in metres; samples beyond it are dropped even if they hold data. Changing it recomputes the whole survey Sv."
 
 steps:
 
