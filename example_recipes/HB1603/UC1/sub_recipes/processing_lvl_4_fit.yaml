@@ -1,0 +1,121 @@
+# Processing level 4 (fit): HDBSCAN fitted on one segment, with a statistics table.
+#
+#   reshape -> add cell_cv -> normalize -> HDBSCAN -> label every point
+#           -> embed -> cluster statistics
+#
+# processing_lvl_4.yaml without the clustering report, and with the same step
+# ids. normalize_ml's normalizer and run_hdbscan's model are what
+# processing_lvl_4_predict.yaml applies to another segment. cluster_stats
+# writes the per-cluster Sv statistics as a JSON table instead of a figure.
+
+recipe:
+  name: "hb1603_processing_lvl_4_fit"
+  description: "HDBSCAN clustering of an MVBS grid, embedded back onto the grid, with a per-cluster statistics table."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  mvbs:
+    type: Dataset
+    description: "Gridded MVBS to cluster, one ML sample per cell."
+  cell_stats_sv:
+    type: Dataset
+    description: "Per-cell statistics, such as the coefficient of variation, on the MVBS grid. Needed when the cell_cv feature is listed."
+  sample_size:
+    type: int
+    default: 1200000
+    description: "Cap on the points HDBSCAN is fitted on; points over the cap are dropped at random and get no label. Set it above the valid cell count."
+  min_cluster_size_fraction:
+    type: float
+    default: 0.01
+    description: "Smallest cluster HDBSCAN keeps, as a fraction of the points it is fitted on."
+  min_samples:
+    type: int
+    default: 4
+    description: "Neighbourhood size HDBSCAN uses to judge density; higher values leave more points unclustered as noise."
+
+steps:
+
+  - id: reshape_ml
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${inputs.mvbs}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: add_aux_features
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml.ds_ml_ready}
+      ds_sv: ${inputs.cell_stats_sv}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - cell_cv
+
+  # The normalizer output is a pickle, kept in the user tier.
+  - id: normalize_ml
+    op: normalize_ml_data
+    checkpoint: always
+    inputs:
+      ds_ml: ${add_aux_features.ds_ml_ready}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      shift_positive: false
+
+  # Checkpointed as a pickle, so the prediction step gets the fitted model
+  # without refitting. If it fails to load, delete this step's cache entry.
+  - id: run_hdbscan
+    op: run_hdbscan
+    checkpoint: always
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      ml_result_name: "hdbscan_results"
+      min_cluster_size_fraction: ${inputs.min_cluster_size_fraction}
+      min_samples: ${inputs.min_samples}
+      sample_size: ${inputs.sample_size}
+      cluster_selection_method: "leaf"
+      use_hdbscan: true
+      soft_membership_threshold: .1
+
+  - id: label_all_points
+    op: assign_clusters_to_all_points
+    checkpoint: never
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+
+  # gridded_results is the labels layer.
+  - id: embed_results
+    op: embed_clustering_results
+    checkpoint: always
+    inputs:
+      ds_normalized: ${normalize_ml.ds_normalized}
+      clustering_results: ${label_all_points.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+  - id: cluster_stats
+    op: cluster_statistics
+    checkpoint: always
+    inputs:
+      ds_normalized: ${embed_results.ds_normalized}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+      sv_data_var: "Sv"
+      compute_pairwise_diffs: true

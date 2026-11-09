@@ -29,16 +29,13 @@
 # outputs_dir must stay local: the calibration artifacts and the report images
 # are written with pathlib, not fsspec.
 
-user_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/hb1603_uc1_test_2
+user_cache_dir: gs://ggn-nmfs-aa-prod-1-data/derived_products/brett.layman
 temp_dir: ./exe_temp
 outputs_dir: ./outputs
 
-# The shared survey Sv. Point this at the bucket once the survey pass has been
-# curated there; until then a local folder is fine and the workflow behaves the
-# same, just without the sharing.
-#
-# survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/Survey/hb1603_survey_cache
-survey_cache_dir: gs://ggn-nmfs-aa-dev-1-data/Test_Layman/hb1603_survey_cache
+# The shared survey tier: survey Sv and the cruise pyramid, curated with
+# --cache-write-tier survey on the workstation.
+survey_cache_dir: gs://ggn-nmfs-aa-prod-1-data/derived_products/Shared_Cache/Henry_B._Bigelow/HB1603
 
 # Remote reads need the gcs extra and application-default credentials:
 #   pip install "aa-recipe-manager[gcs]"

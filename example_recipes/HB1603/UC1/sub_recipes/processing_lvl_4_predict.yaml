@@ -1,0 +1,103 @@
+# Processing level 4 (predict): label a second segment with a fitted model.
+#
+#   reshape -> add cell_cv -> normalize with the fit's scaling
+#           -> predict every point -> embed
+#
+# Nothing is fitted here. The features and their scaling must match
+# processing_lvl_4_fit.yaml, so the reshape and auxiliary steps repeat its
+# params and the normalize step applies the fit's normalizer. Every label is
+# hdbscan's approximate_predict of the fitted model.
+
+recipe:
+  name: "hb1603_processing_lvl_4_predict"
+  description: "Cluster labels for an MVBS grid predicted from a model fitted on another segment."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  mvbs:
+    type: Dataset
+    description: "Gridded MVBS to label, on the same grid and channels as the fit."
+  cell_stats_sv:
+    type: Dataset
+    description: "Per-cell statistics on the MVBS grid, for the cell_cv feature."
+  # Wire it to normalize_ml.normalizer.
+  normalizer:
+    type: object
+    description: "Fitted normalizer from the fit's normalize_ml_data step."
+  # Wire both to run_hdbscan.
+  clustering_results:
+    type: Dataset
+    description: "The fit's clustering result, which supplies the result metadata."
+  clustering_model:
+    type: object
+    description: "The fitted HDBSCAN model."
+
+steps:
+
+  - id: reshape_ml_b
+    op: reshape_for_ml
+    inputs:
+      ds_MVBS: ${inputs.mvbs}
+    params:
+      data_var: "Sv"
+      dataset_name: "ml_dataset"
+      feature_strategy: "mean_centered"
+      baseline_channel: 0
+
+  - id: add_aux_features_b
+    op: add_auxiliary_features
+    inputs:
+      ds_ml: ${reshape_ml_b.ds_ml_ready}
+      ds_sv: ${inputs.cell_stats_sv}
+    params:
+      dataset_name: "ml_dataset"
+      features:
+        - cell_cv
+
+  - id: normalize_ml_b
+    op: normalize_ml_data
+    checkpoint: always
+    inputs:
+      ds_ml: ${add_aux_features_b.ds_ml_ready}
+      normalizer: ${inputs.normalizer}
+    params:
+      method: "flatten"
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+
+  # checkpoint: never because embed_results_b holds the labels.
+  - id: predict_b
+    op: assign_clusters_to_all_points
+    checkpoint: never
+    inputs:
+      ds_normalized: ${normalize_ml_b.ds_normalized}
+      clustering_results: ${inputs.clustering_results}
+      clustering_model: ${inputs.clustering_model}
+    params:
+      dataset_name: "ml_dataset"
+      normalization_name: "normalized_flatten_mean_centered"
+      predict_all: true
+      keep_model: false
+
+  # gridded_results is this segment's labels layer.
+  - id: embed_results_b
+    op: embed_clustering_results
+    checkpoint: always
+    inputs:
+      ds_normalized: ${normalize_ml_b.ds_normalized}
+      clustering_results: ${predict_b.clustering_results}
+    params:
+      dataset_name: "ml_dataset"
+      ml_result_name: "hdbscan_results"
+
+outputs:
+  ds_normalized:
+    step_id: embed_results_b
+    output_name: ds_normalized
+    description: "Segment B's normalized ML Dataset with the predicted labels."
+  gridded_results:
+    step_id: embed_results_b
+    output_name: gridded_results
+    description: "Segment B's cluster labels on the MVBS grid."

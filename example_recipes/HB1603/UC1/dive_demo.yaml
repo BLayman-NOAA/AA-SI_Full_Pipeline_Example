@@ -1,0 +1,179 @@
+# HB1603 dive demo: two dives on 14 August, one fitted and one predicted.
+#
+# The recipe manager client demo. HDBSCAN is fitted on SWD_20160814-OE09
+# (segment A) and its model labels SWD_20160814-OE03 (segment B). Each
+# segment's MVBS carries its dive profile and 99% bounds as line variables,
+# and cluster_stats writes the per-cluster statistics as a JSON table.
+#
+#   aa-recipe run dive_demo.yaml
+#
+#   plan              the two dive windows
+#   level 0 (user)    the survey's catalogue and calibration mapping, loaded
+#   level 1, 2a       the survey's per-file Sv, cache hits at compute_sv and
+#                     compute_transducer_depth
+#   level 2b (user)   per file, inside the dive windows: surface-referenced
+#                     depth, masks, noise removal
+#   level 3 (user)    per file: sparse mask, grid, per-cell CV; fan in
+#   segments          the two dives cut from the pooled grid, lines added
+#   level 4 fit       clustering on segment A, statistics table
+#   level 4 predict   segment B labelled by the fitted model
+#
+# Depth is surface referenced (compute_transducer_depth), the reference of the
+# survey pyramid and the dive lines, so all three coincide on screen.
+#
+# KEEP THE SURVEY LEVELS IN STEP WITH survey_sv.yaml
+#
+#   Same include order and input values. Levels 1 to 3 are one per-file chain,
+#   so nothing non-mapped may be declared between those includes; that is why
+#   the dive plan comes first. Literal values are not reachable with --input.
+#
+# LOCAL TEST LINEAGE
+#
+#   Six NCEI files around both dives, with every cache under ./demo. A narrowed
+#   query is its own lineage and computes its own Sv. Run from this folder:
+#
+#     aa-recipe run dive_demo.yaml --config demo/dive_demo.config.yaml \
+#       --input file_time_start=2016-08-14T13:00:00 \
+#       --input file_time_end=2016-08-14T15:25:00
+#
+#   Without --config, aa-recipe.config.yaml applies.
+
+recipe:
+  name: "hb1603_dive_demo"
+  description: "HDBSCAN fitted on one HB1603 dive and applied to a second, with dive lines and a cluster statistics table, for client demos."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+
+  # Survey level: must equal survey_sv.yaml's, or the cached survey chain is
+  # recomputed. Narrow the query window only for the local test lineage.
+  file_time_start:
+    type: str
+    default: "2016-06-01T00:00:00"
+    description: >
+      Start of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T20:58". Every file overlapping the window is fetched.
+  file_time_end:
+    type: str
+    default: "2016-09-01T00:00:00"
+    description: >
+      End of the NCEI catalogue query, an inclusive ISO UTC datetime such as
+      "2016-07-25T21:45". Every file overlapping the window is fetched.
+  cal_input_folder:
+    type: path
+    default: "../calibration_files/HB201607_cal"
+    description: "Folder of manufacturer calibration files (.cal for EK60, .xml for EK80), a local path or a gs:// URL."
+  calibration_output_dir:
+    type: path
+    default: "./outputs/calibration"
+    description: "Root folder the calibration artifacts are written under."
+  crop_max_range_m:
+    type: float
+    default: 1800.0
+    description: "Range ceiling in metres; samples beyond it are dropped even if they hold data. Changing it recomputes the whole survey Sv."
+
+  # Shared by levels 2b and 3.
+  ping_time_bin:
+    type: str
+    default: "10s"
+    description: >
+      Ping-time bin width of the MVBS grid, as a duration string such as
+      "10s". The sparse-bin mask and the cell statistics use the same bin.
+
+steps:
+
+  - include: sub_recipes/dive_plan.yaml
+    input_overrides:
+      json_dir: "./Auxiliary/JSON_Files"
+      evl_root: "./Auxiliary"
+      pad_minutes: 0.0
+      dive_labels:
+        - "SWD_20160814-OE09"
+        - "SWD_20160814-OE03"
+
+  # Survey levels: keep in step with survey_sv.yaml
+
+  - include: sub_recipes/processing_lvl_0_user.yaml
+    input_overrides:
+      file_time_start: ${inputs.file_time_start}
+      file_time_end: ${inputs.file_time_end}
+      cal_input_folder: ${inputs.cal_input_folder}
+      calibration_output_dir: ${inputs.calibration_output_dir}
+
+  - include: sub_recipes/processing_lvl_1_per_file.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+
+  - include: sub_recipes/processing_lvl_2_survey.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      calibration_dict: ${build_cal_mapping.calibration_dict}
+      mapping_dict: ${build_cal_mapping.mapping_dict}
+      crop_max_range_m: ${inputs.crop_max_range_m}
+
+  # User levels
+
+  - include: sub_recipes/processing_lvl_2_user.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      # The uncropped, checkpointed Sv, so no raw file is read again.
+      sv_source: ${compute_sv.ds_Sv}
+      dive_windows: ${plan_dives.windows}
+      ping_time_bin: ${inputs.ping_time_bin}
+      dive_depth_offset: ${compute_transducer_depth.transducer_depth}
+      surface_depth_m: 10.0
+      frequencies_to_mask: [70, 120, 200]
+      seabed_lines_dir: "./Auxiliary/seabed_lines"
+      seabed_min_coverage: 0.99
+      seafloor_buffer_m: 10.0
+      noise_range_sample_num: 10
+      noise_ping_num: 5
+      noise_snr_threshold: "6.0dB"
+      noise_background_max: "-66dB"
+
+  - include: sub_recipes/processing_lvl_3_user.yaml
+    input_overrides:
+      per_file_source: ${query_ncei.raw_urls}
+      ping_time_bin: ${inputs.ping_time_bin}
+      range_bin: "2m"
+      range_var: "depth"
+      nan_threshold: 0.99
+      # Clears HB1603's deepest recorded range, 2960 to 3003 m. Depth adds the
+      # transducer depth, so the last few metres of the deepest files fall past
+      # it; they lie below the seabed and are masked anyway.
+      mvbs_range_var_max: "3010m"
+      dive_chunk_ping_time: 1000
+
+  # Generous bounds: the grid holds only the dive pings.
+  - include: sub_recipes/dive_demo_segments.yaml
+    input_overrides:
+      mvbs: ${rechunk_dive_mvbs.ds_Sv}
+      cell_stats: ${merge_dive_files_cell_stats.merged}
+      a_start: "2016-08-14T14:30:00"
+      a_end: "2016-08-14T16:00:00"
+      b_start: "2016-08-14T12:30:00"
+      b_end: "2016-08-14T14:30:00"
+      a_fit_evl: "./Auxiliary/DiveProfiles/HB1603_SpermWhaleDive_Span0.2_08142016_1454_UTC_depth.evl"
+      a_u99_evl: "./Auxiliary/DiveProfiles/HB1603_SpermWhaleDive_Span0.2_08142016_1454_UTC_U99CI.evl"
+      a_l99_evl: "./Auxiliary/DiveProfiles/HB1603_SpermWhaleDive_Span0.2_08142016_1454_UTC_L99CI.evl"
+      b_fit_evl: "./Auxiliary/DiveProfiles/HB1603_SpermWhaleDive_Span0.2_08142016_1317_UTC_depth.evl"
+      b_u99_evl: "./Auxiliary/DiveProfiles/HB1603_SpermWhaleDive_Span0.2_08142016_1317_UTC_U99CI.evl"
+      b_l99_evl: "./Auxiliary/DiveProfiles/HB1603_SpermWhaleDive_Span0.2_08142016_1317_UTC_L99CI.evl"
+
+  - include: sub_recipes/processing_lvl_4_fit.yaml
+    input_overrides:
+      mvbs: ${dive_a_mvbs.ds_Sv}
+      cell_stats_sv: ${dive_a_cells.ds_Sv}
+      sample_size: 1200000
+      min_cluster_size_fraction: 0.01
+      min_samples: 4
+
+  - include: sub_recipes/processing_lvl_4_predict.yaml
+    input_overrides:
+      mvbs: ${dive_b_mvbs.ds_Sv}
+      cell_stats_sv: ${dive_b_cells.ds_Sv}
+      normalizer: ${normalize_ml.normalizer}
+      clustering_results: ${run_hdbscan.clustering_results}
+      clustering_model: ${run_hdbscan.clustering_model}

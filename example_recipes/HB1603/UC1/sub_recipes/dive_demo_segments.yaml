@@ -1,0 +1,185 @@
+# Dive demo segments: the pooled dive grid split into two dives, with lines.
+#
+#   dive A: select MVBS and cells -> fit, U99, L99 lines on the MVBS
+#   dive B: the same
+#
+# Non-mapped, so include it after level 3's fan-in. Segment A is what level 4
+# fits on and segment B what the fitted model labels. The lines are surface
+# referenced, so the MVBS must be on depth from the transducer depth.
+
+recipe:
+  name: "hb1603_dive_demo_segments"
+  description: "Two ping-time segments of the pooled dive grid, each MVBS with its dive profile and 99% bounds."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  # Wire it to rechunk_dive_mvbs.ds_Sv.
+  mvbs:
+    type: Dataset
+    description: "Pooled dive MVBS on depth."
+  # Wire it to merge_dive_files_cell_stats.merged.
+  cell_stats:
+    type: Dataset
+    description: "Per-cell statistics matching mvbs, on cell_ping_time."
+  a_start:
+    type: str
+    description: "Inclusive ISO UTC start of segment A, such as \"2016-08-14T14:30:00\"."
+  a_end:
+    type: str
+    description: "Inclusive ISO UTC end of segment A."
+  b_start:
+    type: str
+    description: "Inclusive ISO UTC start of segment B."
+  b_end:
+    type: str
+    description: "Inclusive ISO UTC end of segment B."
+  a_fit_evl:
+    type: path
+    description: "Echoview .evl of dive A's fitted profile."
+  a_u99_evl:
+    type: path
+    description: "Echoview .evl of dive A's upper 99% bound."
+  a_l99_evl:
+    type: path
+    description: "Echoview .evl of dive A's lower 99% bound."
+  b_fit_evl:
+    type: path
+    description: "Echoview .evl of dive B's fitted profile."
+  b_u99_evl:
+    type: path
+    description: "Echoview .evl of dive B's upper 99% bound."
+  b_l99_evl:
+    type: path
+    description: "Echoview .evl of dive B's lower 99% bound."
+
+steps:
+
+  - id: dive_a_mvbs
+    op: select_ping_time_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${inputs.mvbs}
+    params:
+      start: ${inputs.a_start}
+      end: ${inputs.a_end}
+
+  - id: dive_b_mvbs
+    op: select_ping_time_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${inputs.mvbs}
+    params:
+      start: ${inputs.b_start}
+      end: ${inputs.b_end}
+
+  - id: dive_a_cells
+    op: select_ping_time_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${inputs.cell_stats}
+    params:
+      start: ${inputs.a_start}
+      end: ${inputs.a_end}
+      dim: "cell_ping_time"
+
+  - id: dive_b_cells
+    op: select_ping_time_range
+    checkpoint: always
+    inputs:
+      ds_Sv: ${inputs.cell_stats}
+    params:
+      start: ${inputs.b_start}
+      end: ${inputs.b_end}
+      dim: "cell_ping_time"
+
+  # Each line is one variable on (ping_time,), NaN outside the dive. The last
+  # step of each chain holds the MVBS and all three lines.
+  - id: dive_a_fit
+    op: add_line_overlay
+    inputs:
+      ds: ${dive_a_mvbs.ds_Sv}
+    params:
+      line_file_path: ${inputs.a_fit_evl}
+      line_name: "dive_fit"
+      vertical_reference: "surface"
+      edge_extend_s: 0.0
+
+  - id: dive_a_u99
+    op: add_line_overlay
+    inputs:
+      ds: ${dive_a_fit.ds}
+    params:
+      line_file_path: ${inputs.a_u99_evl}
+      line_name: "dive_u99"
+      vertical_reference: "surface"
+      edge_extend_s: 0.0
+
+  - id: dive_a_l99
+    op: add_line_overlay
+    checkpoint: always
+    inputs:
+      ds: ${dive_a_u99.ds}
+    params:
+      line_file_path: ${inputs.a_l99_evl}
+      line_name: "dive_l99"
+      vertical_reference: "surface"
+      edge_extend_s: 0.0
+
+  - id: dive_b_fit
+    op: add_line_overlay
+    inputs:
+      ds: ${dive_b_mvbs.ds_Sv}
+    params:
+      line_file_path: ${inputs.b_fit_evl}
+      line_name: "dive_fit"
+      vertical_reference: "surface"
+      edge_extend_s: 0.0
+
+  - id: dive_b_u99
+    op: add_line_overlay
+    inputs:
+      ds: ${dive_b_fit.ds}
+    params:
+      line_file_path: ${inputs.b_u99_evl}
+      line_name: "dive_u99"
+      vertical_reference: "surface"
+      edge_extend_s: 0.0
+
+  - id: dive_b_l99
+    op: add_line_overlay
+    checkpoint: always
+    inputs:
+      ds: ${dive_b_u99.ds}
+    params:
+      line_file_path: ${inputs.b_l99_evl}
+      line_name: "dive_l99"
+      vertical_reference: "surface"
+      edge_extend_s: 0.0
+
+outputs:
+  dive_a_mvbs:
+    step_id: dive_a_mvbs
+    output_name: ds_Sv
+    description: "Segment A MVBS."
+  dive_b_mvbs:
+    step_id: dive_b_mvbs
+    output_name: ds_Sv
+    description: "Segment B MVBS."
+  dive_a_cells:
+    step_id: dive_a_cells
+    output_name: ds_Sv
+    description: "Segment A per-cell statistics."
+  dive_b_cells:
+    step_id: dive_b_cells
+    output_name: ds_Sv
+    description: "Segment B per-cell statistics."
+  dive_a_lines:
+    step_id: dive_a_l99
+    output_name: ds
+    description: "Segment A MVBS with dive_fit, dive_u99 and dive_l99."
+  dive_b_lines:
+    step_id: dive_b_l99
+    output_name: ds
+    description: "Segment B MVBS with dive_fit, dive_u99 and dive_l99."
