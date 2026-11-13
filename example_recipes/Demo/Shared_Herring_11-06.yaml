@@ -146,6 +146,7 @@ steps:
       range_bin: "4m"
       ping_time_bin: "4s"
       nan_threshold: 0.90
+      range_var: "depth"
 
   # Plot MVBS echogram
   - id: plot_mvbs

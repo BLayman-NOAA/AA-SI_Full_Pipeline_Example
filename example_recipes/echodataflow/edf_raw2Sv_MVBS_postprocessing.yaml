@@ -1,0 +1,189 @@
+# echodataflow's raw to Sv and MVBS postprocessing flows, as one recipe.
+#
+#   [per file]    read raw -> compute Sv -> add depth -> add location
+#   [fan in]      merge the per file Sv along ping_time
+#   [per window]  select the window's pings -> MVBS
+#
+# This is the reference recipe for the recipe to echodataflow compiler. It
+# expresses flow_raw2Sv_postprocessing and flow_create_MVBS_postprocessing
+# (echodataflow/flows/flows_acoustics.py) the way the recipe manager would
+# write them, using built in ops. The only op that is not built in is
+# plan_time_windows, from the echodataflow contrib spec set, which the recipe
+# manager finds by itself when a recipe uses one of its ops.
+#
+# WHAT IS DELIBERATELY DIFFERENT FROM THE ORIGINAL FLOWS
+#
+#   The two flows coordinate through CSV ledgers so they can run incrementally,
+#   retry failed files and delete Sv once its MVBS exists. Run once end to end
+#   none of that is needed, so this is one recipe with no ledger. Each window
+#   is cut from one merged Sv dataset rather than opened from the subset of
+#   files that overlap it, and the MVBS carries ping_count. A file with no
+#   position fixes gets NaN latitude and longitude instead of failing.
+#
+# Inputs are named after the flow parameters they stand for.
+
+recipe:
+  name: "edf_raw2Sv_MVBS_postprocessing"
+  description: "echodataflow's raw to Sv and windowed MVBS postprocessing, as one recipe."
+  version: "1.0"
+  author: "<Your Name>"
+  schema_version: "1"
+
+inputs:
+  path_raw:
+    type: path
+    fingerprint_mode: auto
+    description: "Folder of raw .raw files, a local path or a gs:// URL."
+  raw_file_names:
+    type: list
+    default: []
+    description: >
+      Raw file names in path_raw to process. Empty processes every file in
+      the folder. Stands in for the flow's path_raw_list CSV.
+  sonar_model:
+    type: str
+    default: "EK80"
+    description: "Echosounder model, as echopype names it."
+  nmea_sentence:
+    type: str
+    required: false
+    description: >
+      NMEA sentence type to take position from, such as "GGA". Unset uses
+      every sentence type the files recorded.
+  datagram_type:
+    type: str
+    required: false
+    description: "EK datagram to take position from, MRU1 or IDX. Unset uses the NMEA fixes."
+  depth_offset:
+    type: float
+    default: 9.5
+    description: "Transducer depth in metres added to echo_range to give depth."
+  slice_mins:
+    type: int
+    default: 20
+    description: "Length of each MVBS time window in minutes."
+  no_data_gap_hours:
+    type: float
+    default: 3.0
+    description: >
+      Longest time since the last raw file started for a window to still be
+      computed. Windows inside longer gaps are skipped.
+  range_bin:
+    type: str
+    default: "1m"
+    description: "MVBS depth bin height, such as \"1m\"."
+  ping_time_bin:
+    type: str
+    default: "5s"
+    description: "MVBS time bin width, such as \"5s\"."
+
+steps:
+
+  - id: initial_setup
+    op: initial_setup
+    params:
+      raw_input_folder: ${inputs.path_raw}
+      raw_file_names: ${inputs.raw_file_names}
+
+  # Declared before the per file chain so the chain stays contiguous.
+  - id: plan_windows
+    op: plan_time_windows
+    inputs:
+      raw_file_paths: ${initial_setup.raw_file_paths}
+    params:
+      window_mins: ${inputs.slice_mins}
+      no_data_gap_hours: ${inputs.no_data_gap_hours}
+
+  # Per file: convert_raw_to_Sv in echodataflow.
+
+  - id: read_raw
+    op: read_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: never
+    inputs:
+      raw_file_paths:
+        - ${_item}
+    params:
+      sonar_model: ${inputs.sonar_model}
+      include_bot: false
+      intermediate_format: "zarr"
+
+  - id: combine_raw
+    op: combine_raw_files
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      raw_stores: ${read_raw.raw_stores}
+
+  # No calibration overrides: echopype uses the raw file's own values, as the
+  # flow does. The modes are literals because a recipe input's default does
+  # not reach a step's inputs block, only its params.
+  - id: compute_sv
+    op: compute_sv
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      echodata: ${combine_raw.echodata}
+      waveform_mode: "CW"
+      encode_mode: "power"
+
+  # A constant offset with no EchoData, as the flow calls add_depth.
+  - id: add_depth
+    op: ep_add_depth
+    map_over: ${initial_setup.raw_file_paths}
+    inputs:
+      ds_Sv: ${compute_sv.ds_Sv}
+    params:
+      depth_offset: ${inputs.depth_offset}
+
+  - id: add_location
+    op: ep_add_location
+    map_over: ${initial_setup.raw_file_paths}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${add_depth.ds_Sv}
+      echodata: ${combine_raw.echodata}
+    params:
+      nmea_sentence: ${inputs.nmea_sentence}
+      datagram_type: ${inputs.datagram_type}
+
+  # Fan in. Lazy over the per file stores, so nothing is read until a window
+  # selects its pings.
+
+  - id: merge_sv
+    op: merge_datasets
+    collect: ${add_location.ds_Sv}
+    inputs:
+      datasets: ${add_location.ds_Sv}
+    params:
+      dim: "ping_time"
+
+  # The chunking create_MVBS sets after opening its files.
+  - id: rechunk_sv
+    op: rechunk_dataset
+    inputs:
+      ds_Sv: ${merge_sv.merged}
+    params:
+      ping_time_chunk: 1000
+
+  # Per window: create_MVBS in echodataflow. A window holding no pings selects
+  # nothing and is skipped, as the flow records it as no data.
+
+  - id: select_window
+    op: select_ping_time_range
+    map_over: ${plan_windows.windows}
+    inputs:
+      ds_Sv: ${rechunk_sv.ds_Sv}
+    params:
+      window: ${_item}
+      allow_empty: true
+
+  - id: window_mvbs
+    op: compute_mvbs
+    map_over: ${plan_windows.windows}
+    checkpoint: always
+    inputs:
+      ds_Sv: ${select_window.ds_Sv}
+    params:
+      range_var: "depth"
+      range_bin: ${inputs.range_bin}
+      ping_time_bin: ${inputs.ping_time_bin}
+      reindex: false
