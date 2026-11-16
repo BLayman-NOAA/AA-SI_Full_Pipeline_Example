@@ -1,0 +1,4 @@
+# Check out every text file with LF on every platform. Recipe steps fingerprint
+# input files by their bytes, so a CRLF checkout on Windows would give different
+# step hashes than Linux and miss a shared cache.
+* text=auto eol=lf
